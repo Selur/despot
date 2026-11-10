@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -71,16 +71,16 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <IncludePath>C:\Program Files\VapourSynth\sdk\include\vapoursynth;C:\Program Files %28x86%29\AviSynth+\FilterSDK\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)..\include\avisynth;$(ProjectDir)..\include\vapoursynth;$(ProjectDir)..\src;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>C:\Program Files\VapourSynth\sdk\include\vapoursynth;C:\Program Files %28x86%29\AviSynth+\FilterSDK\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)..\include\avisynth;$(ProjectDir)..\include\vapoursynth;$(ProjectDir)..\src;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>C:\Program Files\VapourSynth\sdk\include\vapoursynth;C:\Program Files %28x86%29\AviSynth+\FilterSDK\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)..\include\avisynth;$(ProjectDir)..\include\vapoursynth;$(ProjectDir)..\src;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>C:\Program Files\VapourSynth\sdk\include\vapoursynth;C:\Program Files %28x86%29\AviSynth+\FilterSDK\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)..\include\avisynth;$(ProjectDir)..\include\vapoursynth;$(ProjectDir)..\src;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -88,6 +88,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;_DEBUG;DESPOT_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -103,6 +104,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;NDEBUG;DESPOT_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -118,6 +120,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_DEBUG;DESPOT_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -133,6 +136,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NDEBUG;DESPOT_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -143,11 +147,23 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\despot-f.cpp" />
-    <ClCompile Include="..\src\despot.cpp" />
+    <ClCompile Include="..\src\core\engine.cpp" />
+    <ClCompile Include="..\src\core\filters.cpp" />
+    <ClCompile Include="..\src\core\kernels_c.cpp" />
+    <ClCompile Include="..\src\core\kernels_sse2.cpp" />
+    <ClCompile Include="..\src\core\kernels_avx2.cpp">
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+    </ClCompile>
+    <ClCompile Include="..\src\core\kernels_neon.cpp" />
+    <ClCompile Include="..\src\core\kernels_dispatch.cpp" />
+    <ClCompile Include="..\src\avs_plugin.cpp" />
+    <ClCompile Include="..\src\vs_plugin.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\src\despot.hpp" />
+    <ClInclude Include="..\src\core\despot.hpp" />
+    <ClInclude Include="..\src\core\kernels.hpp" />
+    <ClInclude Include="..\src\core\kernels_simd.hpp" />
+    <ClInclude Include="..\src\version.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
