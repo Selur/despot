@@ -16,6 +16,7 @@ import platform
 import random
 import sys
 import tempfile
+import gc
 
 import numpy as np
 import vapoursynth as vs
@@ -204,10 +205,38 @@ def main():
         render(core.despot.DeSpot(src8, outfile=f8))
         render(core.despot.DeSpot(src16, outfile=f16))
         core.clear_cache() if hasattr(core, "clear_cache") else None
-        import gc
+
         gc.collect()
         if sorted(open(f8).read().splitlines()) != sorted(open(f16).read().splitlines()):
             fail("16 bit outfile differs from 8 bit")
+
+    # outfile: written in frame order, whatever the request order and the number of threads
+    def spot_file(path, kw, frames):
+        clip = core.despot.DeSpot(src8, outfile=path, **kw)
+        frames(clip)
+        del clip
+        gc.collect()  # the file is complete when the filter is freed
+        return open(path, "rb").read()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for kw in ({}, {"mc": 1}):
+            p = lambda name: os.path.join(tmp, name + ".ass")
+            seq = spot_file(p("seq"), kw, lambda c: [c.get_frame(n) for n in range(c.num_frames)])
+            starts = [line.split(b",")[1] for line in seq.splitlines() if not line.startswith(b"Dialogue: 0,0:00:00.00,0:00:00.00")
+                      and line.startswith(b"Dialogue")]
+            if starts != sorted(starts) or len(starts) < 10:
+                fail(f"outfile {kw}: sequential file not in time order or empty")
+            for name, how in (("parallel", lambda c: list(c.frames(prefetch=16))),
+                              ("backwards", lambda c: list(c[::-1].frames(prefetch=16))),
+                              ("shuffled", lambda c: [c.get_frame(n) for n in random.Random(5).sample(range(30), 30)])):
+                if spot_file(p(name), kw, how) != seq:
+                    fail(f"outfile {kw}: {name} rendering gives a different file")
+            subset = [n for n in range(30) if n < 11 or n > 19]
+            part_seq = spot_file(p("part_seq"), kw, lambda c: [c.get_frame(n) for n in subset])
+            part_rev = spot_file(p("part_rev"), kw, lambda c: [c.get_frame(n) for n in reversed(subset)])
+            if part_seq != part_rev:
+                fail(f"outfile {kw}: frames with a gap are not written in frame order")
+    print("outfile: same file for sequential, parallel, backwards and shuffled rendering")
 
     # threads: parallel rendering equals sequential rendering
     src = to_clip(make_frames(320, 240, 30, "420", 1), vs.YUV420P8)

@@ -171,8 +171,8 @@ void VS_CC create(const VSMap *in, VSMap *out, void *, VSCore *core, const VSAPI
         return fail(e.what());
     }
 
-    // the outfile is written as frames are produced: one frame at a time keeps it tidy
-    const VSFilterMode mode = d->engine->usesOutfile() ? fmUnordered : fmParallel;
+    // no state between frames; the engine writes the outfile in frame order itself
+    const VSFilterMode mode = fmParallel;
     VSFilterDependency deps[2] = {{d->node, rpGeneral}, {d->extmask, rpGeneral}};
     const VSVideoInfo vi = d->vi;
     const int num_deps = d->extmask ? 2 : 1;

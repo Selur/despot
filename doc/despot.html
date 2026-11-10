@@ -200,7 +200,8 @@ Default is planar=false (and you will get error for YUY2).</p>
 The file is in the .ASS subtitle file format.
 Spots are located with their bouding boxes drawn as magenta rectangles (dilated by 2 pixels in each direction relative to the actual bounding boxes, for clarity).
 The default <code>Outline</code> style can be later changed to <code>Mask</code> in an ASS editor (like Aegisub) to produce a mask made of rectangles filled with white.
-The file is overwritten at each filter run, so make a copy before editing it!</p>
+The file is overwritten at each filter run, so make a copy before editing it!
+Since 3.7.0 the spots are written in frame order, whatever order and number of threads the frames are rendered with.</p>
 <p><var>mc</var>: Uses a 3-fold interleaved stream to allow motion-compensated analysis.
 Only the second frame every three frames is processed and returned.
 The input stream should be in the form: <code>Interleave (forward, original, backward)</code>,
@@ -303,7 +304,7 @@ This is probably the most important step.</p>
 <p>DeSpot since version 3.2 is  optimized by hand for Integer SSE (Pentium3, Athlon is needed now).<br>
 Speed increasing up to about 30%.</p>
 <p>Version 3.7.0 has C, SSE2, AVX2 and NEON code paths (see <var>asm_opt</var>), selected at runtime, and
-is multithreaded (AviSynth+ MT_NICE_FILTER, VapourSynth fmParallel; serialized when <var>outfile</var> is used).
+is multithreaded (AviSynth+ MT_NICE_FILTER, VapourSynth fmParallel), also with <var>outfile</var>.
 Every frame is computed from the frames n-2..n+2 only, so seeking and any number of threads give the same
 result as linear access. Maps shared by neighbouring frames (motpn=false, median mode) are computed once.
 With AVX2 it is 2.8 to 4.4 times faster than 3.6.3 on one thread (1080p, including decoding).</p>

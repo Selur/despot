@@ -136,7 +136,7 @@ All parameters are optional and named. The defaults are those of the DeSpot 3.6.
 | `show` | 0 | 0..2 | `0`: filter. `1`: paint spots with `mark_v` instead of removing them, brighten moving areas, colour spots in chroma. `2`: map in luma: 255 spot that is removed, 159 spot kept because of motion, 95 motion, 0 rest. |
 | `mark_v` | 255 | 0..255 | Luma of the marks for `show=1`; its value modulo 3 selects pink, green or grey chroma. |
 | `show_chroma` | false | | `show=2`: keep the chroma of the clip instead of grey. |
-| `outfile` | none | string | Write the detected spots as an ASS subtitle file: magenta rectangles 2 pixels larger than each spot. In an ASS editor (e.g. Aegisub) the `Outline` style can be switched to `Mask` to get filled white rectangles. Only with `motpn=true` and `seg`>0. The file is overwritten every time the script is opened. |
+| `outfile` | none | string | Write the detected spots as an ASS subtitle file: magenta rectangles 2 pixels larger than each spot. In an ASS editor (e.g. Aegisub) the `Outline` style can be switched to `Mask` to get filled white rectangles. Only with `motpn=true` and `seg`>0. Frames are written in frame order, whatever order and number of threads they are rendered with (frames after a gap of unrendered frames when the filter is closed). The file is overwritten every time the script is opened. |
 | `mc` | false | | The input is `Interleave(forward, original, backward)` from motion compensation; only every middle frame is written to `outfile`, with the timing of the original clip. |
 | `spotmax1` | 12 | 1..10000000 | `outfile`: with more spots than this, a frame whose spots are packed tightly is treated as a false detection and left out of the file. |
 | `spotmax2` | 20 | 1..10000000 | `outfile`: with more spots than this, the frame is left out of the file. The spots are still removed in the video. |
@@ -310,8 +310,7 @@ fixed:
 New in the port:
 
 - VapourSynth interface, Linux and macOS builds.
-- Multithreading (AviSynth+ `MT_NICE_FILTER`, VapourSynth `fmParallel`; with `outfile` the filter runs
-  serialized). 3.6.3 cached maps of neighbour frames and was only correct for linear access. The port
+- Multithreading (AviSynth+ `MT_NICE_FILTER`, VapourSynth `fmParallel`, also with `outfile`). 3.6.3 cached maps of neighbour frames and was only correct for linear access. The port
   computes everything a frame needs from frames n-2..n+2, so random access, seeking and any number of
   threads give the same output as linear access. Maps that neighbouring output frames share (`motpn=false`
   and median mode) are computed once and kept in a thread-safe cache.

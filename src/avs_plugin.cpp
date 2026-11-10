@@ -89,8 +89,8 @@ public:
 
     int __stdcall SetCacheHints(int cachehints, int frame_range) override {
         (void)frame_range;
-        // the outfile is written in request order, so keep that order with one thread
-        if (cachehints == CACHE_GET_MTMODE) return engine_->usesOutfile() ? MT_SERIALIZED : MT_NICE_FILTER;
+        // no state between frames; the engine writes the outfile in frame order itself
+        if (cachehints == CACHE_GET_MTMODE) return MT_NICE_FILTER;
         return 0;
     }
 

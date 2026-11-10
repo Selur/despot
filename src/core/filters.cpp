@@ -887,7 +887,7 @@ void mark_color_plane(const uint8_t *c_noise, T *o, ptrdiff_t opitch, int widthU
     }
 }
 
-void print_segments(const Segments &segs, FILE *f_ptr, int fn, double frate, int w, int h, int spotmax1,
+void print_segments(const Segments &segs, std::string &out, int fn, double frate, int w, int h, int spotmax1,
                     int spotmax2) {
     // First check whether this is a cluster of false positives
     int count = 0;
@@ -939,11 +939,13 @@ void print_segments(const Segments &segs, FILE *f_ptr, int fn, double frate, int
                 const int bottom = std::min(std::max(data.b.y2 + margin, 0), h);
                 const int cx = (data.b.x1 + data.b.x2 + 1) >> 1;
                 const int cy = (data.b.y1 + data.b.y2 + 1) >> 1;
-                std::fprintf(f_ptr,
-                             "Dialogue: 0,%s,%s,Mask,,0,0,0,,"
-                             "{\\pos(%d,%d)\\fscx100\\fscy100\\p1}m %d %d l %d %d %d %d %d %d{\\p0}\n",
-                             tb_0, te_0, cx, cy, left - cx, top - cy, right - cx, top - cy, right - cx, bottom - cy,
-                             left - cx, bottom - cy);
+                char line[512]; // two timestamps of up to 63 characters and ten integers
+                std::snprintf(line, sizeof(line),
+                              "Dialogue: 0,%s,%s,Mask,,0,0,0,,"
+                              "{\\pos(%d,%d)\\fscx100\\fscy100\\p1}m %d %d l %d %d %d %d %d %d{\\p0}\n",
+                              tb_0, te_0, cx, cy, left - cx, top - cy, right - cx, top - cy, right - cx, bottom - cy,
+                              left - cx, bottom - cy);
+                out += line;
             }
         }
     }

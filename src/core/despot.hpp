@@ -196,7 +196,9 @@ void clean_color_plane(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitc
 template <typename T>
 void mark_color_plane(const uint8_t *c_noise, T *o, ptrdiff_t opitch, int widthUV, int heightUV, int ssw, int ssh,
                       const Parms &);
-void print_segments(const Segments &segs, FILE *f, int fn, double frate, int w, int h, int spotmax1, int spotmax2);
+// Appends the outfile (ASS) lines of the spots of one frame to out.
+void print_segments(const Segments &segs, std::string &out, int fn, double frate, int w, int h, int spotmax1,
+                    int spotmax2);
 
 // ---------------------------------------------------------------------------------------------
 // Engine: everything for one output frame, computed from the source frames n-2..n+2 only, so
@@ -240,7 +242,6 @@ public:
     int lastNeeded(int n) const { return params.motpn || params.median ? n + 1 : n + 2; }
     // False for the first and last frame: the output is the unchanged source frame.
     bool processes(int n) const { return n > 0 && n < num_frames - 1; }
-    bool usesOutfile() const { return outfile != nullptr; }
 
     // src[i] is source frame n - 2 + i, or null when outside the clip (or not needed); strides in bytes.
     // ext: first plane of the extmask frame n, or null.
@@ -284,8 +285,14 @@ private:
     uint64_t cache_tick = 0;
 
     FILE *outfile = nullptr;
+    // Spot lines are produced in any order (threads, seeking) and written in frame order: the lines of
+    // a frame wait in 'pending' until all earlier frames that report spots are written.
+    bool reportsSpots(int n) const;
+    void flushSpots(bool all);
     std::mutex outfile_mutex;
     std::vector<bool> written;
+    std::map<int, std::string> pending;
+    int next_spot_frame = 0;
 };
 
 } // namespace despot

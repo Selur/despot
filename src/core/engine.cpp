@@ -164,11 +164,35 @@ Engine::Engine(const Params &p, const Format &f, int nframes, int64_t fnum, int6
         const int thickness = int(std::floor(diag / 860 + 0.75));
         std::fprintf(outfile, ass_header, f.width, f.height, thickness);
         written.assign(num_frames > 0 ? num_frames : 0, false);
+        while (next_spot_frame < num_frames && !reportsSpots(next_spot_frame)) ++next_spot_frame;
     }
 }
 
 Engine::~Engine() {
-    if (outfile) std::fclose(outfile);
+    if (outfile) {
+        flushSpots(true); // frames after a gap (frames that were never requested), in frame order
+        std::fclose(outfile);
+    }
+}
+
+bool Engine::reportsSpots(int n) const {
+    // in mc mode only the middle frame of every three is a real frame
+    const int r = params.mc ? 3 : 1;
+    return processes(n) && n == (n / r) * r + (r - 1) / 2;
+}
+
+void Engine::flushSpots(bool all) {
+    bool wrote = false;
+    while (!pending.empty()) {
+        auto it = pending.begin();
+        if (!all && it->first != next_spot_frame) break;
+        std::fputs(it->second.c_str(), outfile);
+        wrote = true;
+        next_spot_frame = it->first + 1;
+        while (next_spot_frame < num_frames && !reportsSpots(next_spot_frame)) ++next_spot_frame;
+        pending.erase(it);
+    }
+    if (wrote) std::fflush(outfile);
 }
 
 std::unique_ptr<Engine::Work> Engine::acquire() {
@@ -231,16 +255,17 @@ std::shared_ptr<const Engine::MapEntry> Engine::cachedMap(MapKind kind, int fram
 }
 
 void Engine::writeSpots(int fn, const Segments &segs) {
-    // in mc mode only the middle frame of every three is a real frame; it is frame fn / 3 of the source
+    if (!reportsSpots(fn)) return;
+    // in mc mode frame fn is frame fn / 3 of the source
     const int r = params.mc ? 3 : 1;
-    const int fnd = (fn / r) * r + (r - 1) / 2;
-    if (fn != fnd) return;
-    std::lock_guard<std::mutex> lock(outfile_mutex);
-    if (fn < 0 || fn >= static_cast<int>(written.size()) || written[fn]) return;
-    written[fn] = true;
     const double fps = double(fps_num) / double(fps_den * r);
-    print_segments(segs, outfile, fn / r, fps, format.width, format.height, params.spotmax1, params.spotmax2);
-    std::fflush(outfile);
+    std::string text;
+    print_segments(segs, text, fn / r, fps, format.width, format.height, params.spotmax1, params.spotmax2);
+    std::lock_guard<std::mutex> lock(outfile_mutex);
+    if (written[fn]) return; // a frame requested twice
+    written[fn] = true;
+    pending.emplace(fn, std::move(text));
+    flushSpots(false);
 }
 
 void Engine::process(int fn, const FrameR *const src[5], const PlaneR *ext, const FrameW &dst) {
