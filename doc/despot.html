@@ -4,18 +4,20 @@
 <meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
 <meta http-equiv="Content-Language" content="en-us">
 
-<title>DeSpot Plugin for Avisynth</title>
+<title>DeSpot Plugin for AviSynth+ and VapourSynth</title>
 <link rel="stylesheet" type="text/css" href="../avisynth.css">
 </head>
 
 <body>
 <h1>DeSpot</h1>
 <h4>DeSpot - Conditional Temporal Spot Removing Filter</h4>
-<p>Plugin for <a href="http://www.avisynth.org">Avisynth 2.5</a><br>
-Version 3.6.3<br>
+<p>Plugin for <a href="https://avs-plus.net">AviSynth+</a> and <a href="https://www.vapoursynth.com">VapourSynth</a><br>
+Version 3.7.0<br>
 Copyright (C)2003-2009 Alexander G. Balakhnin aka Fizick.<br>
-Modified by Firesledge from version 3.6.2<br />
-<a href="http://avisynth.org.ru">http://avisynth.org.ru</a></p>
+Modified by Firesledge from version 3.6.2, AviSynth 2.6 API and x64 build of 3.6.3 by Groucho2004.<br />
+Version 3.7.0: port to AviSynth+ and VapourSynth (multithreading, SSE2/AVX2/NEON, more formats, 9..16 bit, bug fixes),
+see <a href="https://github.com/Selur/despot">https://github.com/Selur/despot</a> and its README.<br />
+<a href="http://avisynth.org.ru">http://avisynth.org.ru</a> (original author)</p>
 
 <p>This filter is designed to remove temporal noise in the form of dots (spots) and streaks found in some videos.
 The filter is also useful for restoration (cleaning) of old telecined  8mm (and other) films
@@ -54,20 +56,29 @@ StackVertical(b, t)</pre>
 <p>Some new parameters are introduced in new filter versions, for more correct spot detection and artifacts-free spot removing.</p>
 <h3>Needed software</h3>
 <ol>
-  <li>The program is plugin (filter) for free  Avisynth 2.5  (http://www.avisynth.org).
-    Tested with versions 2.5.3 - 2.5.8.</li>
-  <li>Old filter versions prior 2.0 (up to last 1.3) were is needed in Avisynth C Interface (avithynth_c.dll) by Kevin Atkinson.
-    There were some problems with it.</li>
-  <li>New filter since version 2.0 is native Avisynth plugin and is NOT needed in C-interface.</li>
+  <li>Version 3.7.0 is one plugin for <a href="https://avs-plus.net">AviSynth+</a> (function <code>DeSpot</code>)
+    and <a href="https://www.vapoursynth.com">VapourSynth</a> API 4 (function <code>core.despot.DeSpot</code>).
+    Builds exist for Windows x64, Linux x86_64 and macOS arm64.</li>
+  <li>Supported formats: 8 to 16 bit integer planar YUV with any chroma subsampling up to 4 in each direction
+    (4:2:0, 4:2:2, 4:4:4, 4:1:1, 4:4:0, 4:1:0), greyscale (Y8..Y16, GRAY8..GRAY16), and in AviSynth+ YUVA
+    (the alpha plane is passed through). RGB, 32 bit float and interleaved YUY2 are not supported.</li>
+  <li>Old filter versions prior 2.0 (up to last 1.3) were C plugins that needed the Avisynth C Interface (avisynth_c.dll) by Kevin Atkinson.
+    Versions 2.0 to 3.6.3 were native Avisynth 2.5 plugins for YV12 (and planar YUY2).</li>
 </ol>
 <h3>USAGE</h3>
-<p>DeSpot may be loaded as any Avisynth plugin, or by putting it in the Plugins directory or by using LoadPlugin. 
-Clip must be YV12 or special planar YUY2 format.
+<p>DeSpot may be loaded as any AviSynth+ plugin, by putting it in the plugins directory or by using LoadPlugin.
+In VapourSynth it is autoloaded from the plugin directory (or installed as a wheel), or loaded with
+<code>core.std.LoadPlugin()</code>; boolean parameters are passed as 0 or 1 there.
 Basic Usage:</p>
 <pre>AviSource(&quot;d:\video.avi&quot;)
 LoadPlugin(&quot;despot.dll&quot;)
-ConvertToYV12()
 DeSpot(p1=35, p2=14, mthres=25)</pre>
+<pre>import vapoursynth as vs
+core = vs.core
+clip = core.lsmas.LWLibavSource(&quot;d:/video.mkv&quot;)
+clip = core.despot.DeSpot(clip, p1=35, p2=14, mthres=25)
+clip.set_output()</pre>
+<p>The first and the last frame of a clip are returned unchanged (they have no temporal neighbour).</p>
 <p>The filter may work in 2 main modes, switched by parameter <var>median</var> (since version 2.0):<br>
 <var>median</var> (true or false, default = false),<br>
 false - Spots removing mode -  filter will attempt to identify noise and eliminate it.<br>
@@ -79,14 +90,17 @@ int "merode", bool "interlaced", bool "median", int "p1", int "p2", int "pwidth"
 int "pheight", bool "ranked", int "sign", int "maxpts", int "p1percent",
 int "dilate", bool "fitluma", int "blur", int "tsmooth", int "show", int "mark_v", 
 bool "show_chroma", bool "motpn", int "seg", bool "color", int "mscene", int "minpts",
-clip "extmask", bool "planar", string "outfile", bool "mc", int "spotmax1", int "spotmax2"</var>)
+clip "extmask", bool "planar", string "outfile", bool "mc", int "spotmax1", int "spotmax2", int "asm_opt"</var>)
 </p>
+<p>VapourSynth: <code>despot.DeSpot</code>(<var>clip, ...</var>) with the same parameters except <var>planar</var>.</p>
+<p>The defaults below are those of the plugin. Older versions of this document listed <var>pwidth</var>=6 and
+<var>fitluma</var>=true, but all binaries since 3.x used 16 and false.</p>
 <h4>Parameters for DeSpot in spots removing mode are any of the following:</h4>
 <p><var>p1</var> (default 24)<br>
 <var>p2</var> (default 12)<br>
     A pixel needs to be at different from its neighbors by at least 'P1' in order for it to be considered noise. The surrounding pixels must
 be different by at lease 'P2' in order for the pixel to be considered part of the same spot.</p>
-<p><var>pwidth</var> (default 6)<br>
+<p><var>pwidth</var> (default 16)<br>
 <var>pheight</var> (default 5)<br>
     A spot can be no larger than <var>pwidth x pheight</var></p>
 <p><var>ranked</var> (true or false, default=true)<br>
@@ -104,15 +118,15 @@ Set upper limit of points (pixels) per every spot.</p>
 Set lower limit of points (pixels) per every spot.</p>
 <p><var>p1percent</var> (from 0 to 100, default=10)<br>
 Set lower limit of relative fracture of high-contrasted (by criterion P1) pixels per spot (in percent).</p>
-<p><var>dilate</var> (from 0 to 255, default=1)<br>
+<p><var>dilate</var> (from 0 to 1000, default=1)<br>
 Set range of  morphological dilate (growing) of  removed spots (in pixel units).<br>
 <br>
-<var>fitluma</var> (true or false, default=true)<br>
+<var>fitluma</var> (true or false, default=false)<br>
     Enables some frame luminosity correction in places of deleted spots</p>
 <p><var>blur</var> (from 0 to 4, default 1)<br>
     Value (length) of local spatial blur near borders of deleted spots<br>
 <br>
-<var>tsmooth</var> (from 0 to 127, default 0)<br>
+<var>tsmooth</var> (from 0 to 255, default 0)<br>
     Control temporal smoothing in static areas (except spots and motion).<br>
 Set approximate threshold of pixel luma variance in 3 frames,<br>
 The more variance exceed this threshold, the less temporal smoothing.<br>
@@ -133,9 +147,11 @@ false - not change color of pixels at places of detected spots.</p>
 <p><var>mscene</var> (from 0 to 100, default=40)<br>
 Set percent of pixels in motion for scenechange detection and disabling of frame spot removal</p>
 <p><var>extmask</var> (default none)<br>
-Optional external mask clip. It will be binarized with threshold 127 and logically added (by "OR" operation) 
-to internal motion mask. 
-It can be used for additional protection of good objects (if you have some reliable mask). 
+Optional external mask clip. It will be binarized with threshold 127 and logically added (by "OR" operation)
+to internal motion mask.
+It can be used for additional protection of good objects (if you have some reliable mask).
+It must have the frame size of the clip and 8 to 16 bit integer samples (independent of the clip); only its first
+plane is used, and the threshold is scaled to its bit depth (above half of its range).
 </p>
 <h4>Parameters of DeSpot for both spots removing and median modes are:</h4>
 <p><var>mthres</var> (default 16)<br>
@@ -166,7 +182,9 @@ Motion map is also shown.</p>
 95: Motion map for the current image</p>
 <p><var>show_chroma</var> (true or false)<br>
  Use to show clip color data on motion map.</p>
-<p><var>planar</var> : flag to use special planar color format for YUY2 clips both for input and output of function. 
+<p><var>planar</var> : AviSynth+ only, kept so that old scripts still load; <var>planar</var>=true is an error now
+(use YV16 instead). The old meaning was:
+flag to use special planar color format for YUY2 clips both for input and output of function.  
 It uses special trick for storing of frames with planar color data organization 
 (separate Y, U, V planes in memory) in normal interleaved YUY2 frames format as a container. 
 This way we can avoid numerous internal interleaved to planar conversions and increase speed.
@@ -193,6 +211,14 @@ If it is greater than the parameter, locations are checked.
 If the spots look “packed”, it is likely a detection error and all spots are discareded (from the outfile file only, they are still processed)</p>
 <p><var>spotmax2</var>: Hard limit on the number of spots per frame to send to the outfile.
 If greater, all spots from the frame are discarded.</p>
+<p><var>asm_opt</var> (0 to 3, default 0): instruction set. 0 - best available, 1 - C, 2 - SSE2, 3 - AVX2 (x86);
+on arm64 0 - NEON, 1 - C. All give identical results.</p>
+<h4>High bit depth (9 to 16 bit)</h4>
+<p>All thresholds and levels keep their 8 bit meaning: <var>p1</var>, <var>p2</var>, <var>mthres</var>,
+<var>tsmooth</var>, <var>mark_v</var> and the <var>show</var>=2 levels are scaled by 2^(bits-8) internally.
+Spot and motion detection make the same decisions as in 8 bit: a clip converted from 8 bit by a shift
+(for example <code>ConvertBits(16)</code>) gives exactly the same spots, motion map and outfile as the 8 bit clip.
+Replaced pixels are computed at full precision.</p>
 
 <h3>TUNING THE PARMS</h3>
 <p>In order for the filter to work right the various parameters MUST be set correctly. There is no good default values.</p>
@@ -276,7 +302,15 @@ This is probably the most important step.</p>
 <h3>OPTIMIZATION NOTES</h3>
 <p>DeSpot since version 3.2 is  optimized by hand for Integer SSE (Pentium3, Athlon is needed now).<br>
 Speed increasing up to about 30%.</p>
+<p>Version 3.7.0 has C, SSE2, AVX2 and NEON code paths (see <var>asm_opt</var>), selected at runtime, and
+is multithreaded (AviSynth+ MT_NICE_FILTER, VapourSynth fmParallel; serialized when <var>outfile</var> is used).
+Every frame is computed from the frames n-2..n+2 only, so seeking and any number of threads give the same
+result as linear access. On one thread it is 2 to 2.8 times faster than 3.6.3.</p>
 <h3>COMPILING</h3>
+<p>Version 3.7.0 is built with Meson (<code>meson setup build &amp;&amp; ninja -C build</code>; on Windows with MSVC
+<code>meson setup build --vsenv -Db_vscrt=mt</code>), with <code>build.bat</code> or with the Visual Studio project in
+<code>msvc/</code>. See the README for the tests.</p>
+<p>Older versions:</p>
 <p>Firesledge's versions above 3.6.1 are compiled with MSVC++ 2005 (the Express version should work too) with MS Platform SDK.</p>
 <p>Fizick's version above 1.1 is compiled by free MS VC++ Toolkit 2003 with MS Platform SDK.</p>
 <p>Note: copy lost nmake.exe and cvtres.exe from Bin\win64 dir to Bin dir.</p>
@@ -300,7 +334,7 @@ d = DePanEstimate(i, trust=3)
 DePanInterleave(i, data=d)
 DeSpot(p1=30, p2=15, pwidth=800, pheight=600, mthres=20, motpn=true, dilate=1, seg=1)
 SelectEvery(3, 1)</pre>
-<p>Example simple script with MVTools v0.95 to 1.X (you may tune optional MVAnalyse, MVCompensate parameters):</p>
+<p>Example simple script with MVTools v0.95 to 1.X (historical; with MVTools2 use MSuper, MAnalyse and MFlow as below):</p>
 <pre>AviSource(&quot;h:\kino.avi&quot;)
 LoadPlugin(&quot;mvtools.dll&quot;)
 LoadPlugin(&quot;despot.dll&quot;)
@@ -353,6 +387,24 @@ DeSpot(p1=30,p2=12,pwidth=800,pheight=600,mthres=20,merode=33,\
 
 SelectEvery(3,1) # get filtered source
 </pre>
+<p>The same with VapourSynth (MVTools for VapourSynth, 16 bit or 8 bit clips):</p>
+<pre>src = core.lsmas.LWLibavSource(&quot;h:/kino.mkv&quot;)
+sup = core.mv.Super(src)
+psup = core.mv.Super(core.std.Median(src))   # prefiltered for better motion analysis
+vf = core.mv.Analyse(psup, isb=False)
+vb = core.mv.Analyse(psup, isb=True)
+fwd = core.mv.Flow(src, sup, vf, thscd1=400)
+bwd = core.mv.Flow(src, sup, vb, thscd1=400)
+
+def good(vectors):  # 255 where the motion estimation is good
+    sad = core.mv.Mask(src, vectors, ml=100, kind=1, gamma=1, thscd1=400)
+    return core.std.Expr(core.std.ShufflePlanes(sad, 0, vs.GRAY), &quot;x 20 &gt; 0 255 ?&quot;)
+
+ok = core.std.Maximum(core.std.Expr([good(vf), good(vb)], &quot;x y max&quot;))
+clip = core.std.Interleave([fwd, src, bwd])
+clip = core.despot.DeSpot(clip, p1=30, p2=12, pwidth=800, pheight=600, mthres=20, merode=33, seg=0,
+                          color=1, motpn=1, extmask=core.std.Interleave([ok, ok, ok]))
+clip = core.std.SelectEvery(clip, 3, 1)</pre>
 <h3>ADDITIONAL INFO</h3>
 <p>Discussion of ConditionalTemporalMedian filter and Despot filter :
 <cite><a href="http://forum.doom9.org/showthread.php?s=&amp;threadid=59388">http://forum.doom9.org/showthread.php?s=&amp;threadid=59388</a></cite></p>
@@ -369,6 +421,30 @@ Documentation is distributed under <a href="http://creativecommons.org/licenses/
 
 <h3>VERSIONS CHANGES LOG</h3>
 <ul>
+  <li>Version 3.7.0 (unreleased):
+    <ul>
+      <li>Port to AviSynth+ and VapourSynth API 4 in one binary; Windows x64, Linux x86_64 and macOS arm64 builds.</li>
+      <li>Multithreading; every frame is computed from frames n-2..n+2 only (no state, correct for any access order).</li>
+      <li>SSE2, AVX2 and NEON code, new parameter <var>asm_opt</var>.</li>
+      <li>All 8 bit planar YUV subsamplings, greyscale, YUVA (alpha passed through), 9 to 16 bit samples; extmask of any bit depth.</li>
+      <li>Fixed: <var>blur</var>=4 used pixel x-11 instead of x-1; <var>interlaced</var>=true mixed the two fields in the
+        motion and dilate stages; the spot blur read outside the row at the left/right border; spots at the right border
+        had a one pixel wide bounding box; uninitialised segment list end marker; the <var>spotmax1</var> cluster test never
+        worked; <var>mc</var> timestamps in the outfile; overflow for large <var>mwidth</var>/<var>mheight</var>/<var>dilate</var>;
+        reads beyond the row for widths that are no multiple of 8. Otherwise the output is identical to 3.6.3.</li>
+      <li>Documentation: real defaults of <var>pwidth</var> (16) and <var>fitluma</var> (false).</li>
+    </ul>
+  </li>
+  <li>Version 3.6.3.1 (August 7, 2020, Groucho2004):
+    <ul>
+      <li>Fixed a crash with AviSynth+ 3.6.1.</li>
+    </ul>
+  </li>
+  <li>Version 3.6.3.0 (June 3, 2020, Groucho2004):
+    <ul>
+      <li>Updated to the AviSynth 2.6 API, x64 build.</li>
+    </ul>
+  </li>
   <li>Version 3.6.3.0 (October 8, 2013):
     <ul>
       <li>Added the <var>mc</var>, <var>spotmax1</var> and <var>spotmax2</var> parameters.</li>

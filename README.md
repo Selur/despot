@@ -33,16 +33,28 @@ SSE2/AVX2 (x86) or NEON (arm64).
 
 ## Formats
 
-8 bit only:
+8 to 16 bit integer samples:
 
 - YUV with any chroma subsampling up to 4 in each direction: 4:2:0, 4:2:2, 4:4:4, 4:1:1, 4:4:0, 4:1:0
-  (AviSynth+: YV12, YV16, YV24, YV411 and the other planar YUV formats)
-- greyscale (Y8 / GRAY8)
+  (AviSynth+: YV12, YV16, YV24, YV411 and the other planar YUV formats, also with 10, 12, 14, 16 bit)
+- greyscale (Y8 / GRAY8 up to Y16 / GRAY16)
 - AviSynth+ YUVA: the alpha plane is passed through unchanged
 
 Spots are detected and removed on luma. Chroma is only changed by `color=true` (cleaning) and
-`show=1` (marking). High bit depth, RGB and interleaved YUY2 are not supported; use for example
-`ConvertToYV16()` for YUY2 or `ConvertBits(8)` for high bit depth sources.
+`show=1` (marking). RGB, 32 bit float and interleaved YUY2 are not supported; use for example
+`ConvertToYV16()` for YUY2 or `ConvertBits(16)` for float sources.
+
+### High bit depth
+
+All thresholds and levels keep their 8 bit meaning, whatever the bit depth: `p1`, `p2`, `mthres`,
+`tsmooth`, `mark_v` and the `show=2` levels are scaled by 2^(bits-8) internally (`mthres=16` is 64 for
+10 bit). Spot and motion detection use the same 8 bit decisions: a clip converted from 8 bit by a shift
+(`ConvertBits(16)` in AviSynth+) gives exactly the same spots, motion map and `outfile` as the 8 bit
+clip. Replaced pixels are computed at full precision, so the output then differs from the 8 bit
+result only by the rounding of 8 bit (on average half an 8 bit step at the replaced pixels).
+
+`extmask` may have any bit depth from 8 to 16, independent of the clip; values above half of its range
+(above 127 in 8 bit) are protected.
 
 The first and the last frame of a clip are returned unchanged, because they lack a temporal neighbour.
 
@@ -102,7 +114,7 @@ All parameters are optional and named. The defaults are those of the DeSpot 3.6.
 | `merode` | 33 | 0..100 | Percentage of moving pixels a block needs in the erode stage; smaller motion areas are dropped. |
 | `motpn` | true | | `true`: motion from the previous to the next frame. `false`: from previous to current and from current to next frame (the method before 3.0). |
 | `mscene` | 40 | 0..100 | If more than this percentage of the frame moves, the frame is treated as a scene change and nothing is removed. |
-| `extmask` | none | clip | External mask, luma above 127 is protected like motion. Same frame size, 8 bit; only its first plane is used. |
+| `extmask` | none | clip | External mask, values above 127 (8 bit scale) are protected like motion. Same frame size, 8..16 bit; only its first plane is used. |
 | `interlaced` | false | | Process the two fields separately. |
 
 ### Spot removal
@@ -304,13 +316,13 @@ New in the port:
   threads give the same output as linear access.
 - SSE2/AVX2/NEON code (`asm_opt`): 2 to 2.8 times faster than 3.6.3 on one thread (1080p, depending on
   the mode), plus the gain from multithreading.
-- Formats other than YV12 (see [Formats](#formats)); frame properties are kept.
+- Formats other than YV12 and 9 to 16 bit samples (see [Formats](#formats)); frame properties are kept.
 
 ## History
 
 | Version | Date | Changes |
 |---|---|---|
-| 3.7.0 | unreleased | This port: AviSynth+ and VapourSynth, multithreading, SIMD, more formats, bug fixes. |
+| 3.7.0 | unreleased | This port: AviSynth+ and VapourSynth, multithreading, SIMD, more formats, 9..16 bit, bug fixes. |
 | 3.6.3.1 | 2020-08-07 | Groucho2004: fixed a crash with AviSynth+ 3.6.1. |
 | 3.6.3.0 | 2020-06-03 | Groucho2004: AviSynth 2.6 API, x64 build. |
 | 3.6.3 | 2013-10-08 | cretindesalpes (Firesledge): `mc`, `spotmax1`, `spotmax2`. |
@@ -335,7 +347,8 @@ Visual Studio project in `msvc/`. The AviSynth+ and VapourSynth headers are incl
 
 - `meson test -C build` (or `build\kernel_test.exe`): every SIMD kernel against the C kernels on random data.
 - `python test/test_despot.py [plugin]`: VapourSynth tests: every parameter case in every instruction
-  set against C, all formats, odd frame sizes, random frame order, parallel rendering. Without a path
+  set against C, all formats and bit depths, odd frame sizes, random frame order, parallel rendering, and
+  that 8 bit content in 16 bit gives the same spots as in 8 bit. Without a path
   the installed plugin is tested.
 - `python test/avs_compare.py ref.dll new.dll clip.y4m`: compares two AviSynth+ builds over the
   parameter cases; `test/gen_clip.py` writes a synthetic clip with spots. `build.bat compat` builds the

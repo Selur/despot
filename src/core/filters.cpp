@@ -165,6 +165,67 @@ void reject_chain(Segment *c, const Parms &p) {
         for (Segment *m = c->data.nowis; m; m = m->data.nowis) m->data.s.is_noise = false;
 }
 
+// Sample kernels for 8 bit (original kernels) and 9..16 bit samples.
+inline void k_outliers(const Parms &P, const uint8_t *p, const uint8_t *n, const uint8_t *c, uint8_t *o) {
+    P.k->outliers(p, n, c, o, P.width, P.sign, P.ranked, P.p1);
+}
+inline void k_outliers(const Parms &P, const uint16_t *p, const uint16_t *n, const uint16_t *c, uint8_t *o) {
+    P.k->outliers16(p, n, c, o, P.width, P.sign, P.ranked, P.p1, P.shift);
+}
+inline void k_motion(const Parms &P, const uint8_t *p, const uint8_t *c, uint8_t *m) {
+    P.k->motion(p, c, m, P.width, P.mthres);
+}
+inline void k_motion(const Parms &P, const uint16_t *p, const uint16_t *c, uint8_t *m) {
+    P.k->motion16(p, c, m, P.width, static_cast<uint16_t>(P.mthres << P.shift));
+}
+inline void k_ext_mask(const Parms &P, const uint8_t *e, uint8_t *m, int) { P.k->ext_mask(e, m, P.width); }
+inline void k_ext_mask(const Parms &P, const uint16_t *e, uint8_t *m, int shift) {
+    P.k->ext_mask16(e, m, P.width, shift);
+}
+inline void k_median(const Parms &P, const uint8_t *p, const uint8_t *n, const uint8_t *c, const uint8_t *m,
+                     uint8_t *o) {
+    P.k->median(p, n, c, m, o, P.width);
+}
+inline void k_median(const Parms &P, const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *m,
+                     uint16_t *o) {
+    P.k->median16(p, n, c, m, o, P.width);
+}
+inline void k_luma_sums(const Parms &P, const uint8_t *c, const uint8_t *p, const uint8_t *n, int64_t *a, int64_t *b) {
+    P.k->luma_sums(c, p, n, P.width, a, b);
+}
+inline void k_luma_sums(const Parms &P, const uint16_t *c, const uint16_t *p, const uint16_t *n, int64_t *a,
+                        int64_t *b) {
+    P.k->luma_sums16(c, p, n, P.width, a, b);
+}
+inline void k_remove(const Parms &P, const uint8_t *p, const uint8_t *n, const uint8_t *c, const uint8_t *noise,
+                     const uint8_t *motion, uint8_t *o, int lumad) {
+    P.k->remove(p, n, c, noise, motion, o, P.width, lumad);
+}
+inline void k_remove(const Parms &P, const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *noise,
+                     const uint8_t *motion, uint16_t *o, int lumad) {
+    P.k->remove16(p, n, c, noise, motion, o, P.width, lumad, static_cast<uint16_t>(P.maxval));
+}
+inline void k_tsmooth(const Parms &P, const uint8_t *p, const uint8_t *n, uint8_t *o, const uint8_t *noise,
+                      const uint8_t *motion) {
+    P.k->tsmooth(p, n, o, noise, motion, P.width, P.tsmooth);
+}
+inline void k_tsmooth(const Parms &P, const uint16_t *p, const uint16_t *n, uint16_t *o, const uint8_t *noise,
+                      const uint8_t *motion) {
+    P.k->tsmooth16(p, n, o, noise, motion, P.width, P.tsmooth << P.shift);
+}
+inline void k_mark(const Parms &P, const uint8_t *c, const uint8_t *noise, const uint8_t *motion, uint8_t *o) {
+    P.k->mark(c, noise, motion, o, P.width, P.mark_v);
+}
+inline void k_mark(const Parms &P, const uint16_t *c, const uint8_t *noise, const uint8_t *motion, uint16_t *o) {
+    P.k->mark16(c, noise, motion, o, P.width, static_cast<uint16_t>(P.mark_v << P.shift), P.shift);
+}
+inline void k_map(const Parms &P, const uint8_t *noise, const uint8_t *motion, uint8_t *o) {
+    P.k->map(noise, motion, o, P.width);
+}
+inline void k_map(const Parms &P, const uint8_t *noise, const uint8_t *motion, uint16_t *o) {
+    P.k->map16(noise, motion, o, P.width, P.shift);
+}
+
 bool any_motion(const uint8_t *row, const Segment *c, const Parms &p) {
     const uint8_t *b = row + std::max(c->lx1 - 1, 0);
     const uint8_t *end = row + std::min(c->lx2 + 2, p.width);
@@ -203,7 +264,8 @@ void binarize_map(const uint8_t *src, uint8_t *dst, uint8_t val, const Parms &p)
 }
 
 // 1D blur along the row near spots (seg=0 mode)
-void lineblur(const uint8_t *c_noise, const uint8_t *c_motion, uint8_t *o, int width, const Parms &parms) {
+template <typename T>
+void lineblur(const uint8_t *c_noise, const uint8_t *c_motion, T *o, int width, const Parms &parms) {
     int b[10];
     const int xleft = 2 * parms.blur;
     const int xright = width - 2 * parms.blur;
@@ -330,7 +392,8 @@ void lineblur(const uint8_t *c_noise, const uint8_t *c_motion, uint8_t *o, int w
 }
 
 // 1D triangle blur at both ends of a removed segment
-void segment_blur(uint8_t *o, int x1, int x2, int blur) {
+template <typename T>
+void segment_blur(T *o, int x1, int x2, int blur) {
     int b[16];
     switch (blur) {
     case 0: break;
@@ -461,12 +524,13 @@ inline bool chroma_spot(const uint8_t *const *rows, int nrows, int i, int ssw, i
 
 // ------------------------------------------------------------------------------------------------
 
-void find_outliers(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *n,
-                   ptrdiff_t npitch, uint8_t *o, const Parms &parms) {
+template <typename T>
+void find_outliers(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const T *n, ptrdiff_t npitch,
+                   uint8_t *o, const Parms &parms) {
     // o is the difference of c to the range of prev and next (ranked: of 3 neighbours each)
     std::memset(o, 0, parms.size);
     for (int y = 0; y < parms.height; ++y) {
-        parms.k->outliers(p, n, c, o, parms.width, parms.sign, parms.ranked, parms.p1);
+        k_outliers(parms, p, n, c, o);
         p += ppitch;
         c += cpitch;
         n += npitch;
@@ -513,10 +577,11 @@ void reject_on_motion(Segments &segs, const uint8_t *motion, const Parms &p) {
             if (c->data.nowis) c->data.s.is_noise = c->data.nowis->data.s.is_noise;
 }
 
-void find_motion(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, uint8_t *motion,
+template <typename T>
+void find_motion(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, uint8_t *motion,
                  const Parms &parms) {
     for (int y = 0; y < parms.height; ++y) {
-        parms.k->motion(p, c, motion, parms.width, parms.mthres);
+        k_motion(parms, p, c, motion);
         p += ppitch;
         c += cpitch;
         motion += parms.pitch;
@@ -574,20 +639,21 @@ void noise_to_one(const uint8_t *p_noise, const uint8_t *c_noise, uint8_t *c_mot
     }
 }
 
-void add_external_mask(const uint8_t *ext, ptrdiff_t ext_pitch, uint8_t *motion, const Parms &parms) {
+template <typename E>
+void add_external_mask(const E *ext, ptrdiff_t ext_pitch, int ext_shift, uint8_t *motion, const Parms &parms) {
     // result = ext > 127 || motion
     for (int y = 0; y < parms.height; y++) {
-        parms.k->ext_mask(ext, motion, parms.width);
+        k_ext_mask(parms, ext, motion, ext_shift);
         motion += parms.pitch;
         ext += ext_pitch;
     }
 }
 
-void cond_median(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *,
-                 const uint8_t *c_motion, const uint8_t *n, ptrdiff_t npitch, uint8_t *o, ptrdiff_t opitch,
-                 const Parms &parms) {
+template <typename T>
+void cond_median(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const uint8_t *, const uint8_t *c_motion,
+                 const T *n, ptrdiff_t npitch, T *o, ptrdiff_t opitch, const Parms &parms) {
     for (int y = 0; y < parms.height; ++y) {
-        parms.k->median(p, n, c, c_motion, o, parms.width);
+        k_median(parms, p, n, c, c_motion, o);
         p += ppitch;
         c += cpitch;
         n += npitch;
@@ -596,21 +662,22 @@ void cond_median(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t
     }
 }
 
-void remove_outliers(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *c_noise,
-                     const uint8_t *c_motion, const uint8_t *n, ptrdiff_t npitch, uint8_t *o, ptrdiff_t opitch,
+template <typename T>
+void remove_outliers(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const uint8_t *c_noise,
+                     const uint8_t *c_motion, const T *n, ptrdiff_t npitch, T *o, ptrdiff_t opitch,
                      const Parms &parms) {
     const int width = parms.width;
     for (int y = 0; y < parms.height; ++y) {
         int lumad = 0;
         if (parms.fitluma) { // line luma correction
             int64_t sc, spn;
-            parms.k->luma_sums(c, p, n, width, &sc, &spn);
+            k_luma_sums(parms, c, p, n, &sc, &spn);
             const int lumac = static_cast<int>(sc / width);
             lumad = lumac - static_cast<int>(spn / (int64_t(width) * 2));
         }
-        parms.k->remove(p, n, c, c_noise, c_motion, o, width, lumad);
+        k_remove(parms, p, n, c, c_noise, c_motion, o, lumad);
         if (parms.blur) lineblur(c_noise, c_motion, o, width, parms); // blur line near spot segments
-        if (parms.tsmooth) parms.k->tsmooth(p, n, o, c_noise, c_motion, width, parms.tsmooth); // after blur
+        if (parms.tsmooth) k_tsmooth(parms, p, n, o, c_noise, c_motion); // after blur
         p += ppitch;
         c += cpitch;
         n += npitch;
@@ -620,11 +687,11 @@ void remove_outliers(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdi
     }
 }
 
-void mark_outliers(const uint8_t *, ptrdiff_t, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *c_noise,
-                   const uint8_t *c_motion, const uint8_t *, ptrdiff_t, uint8_t *o, ptrdiff_t opitch,
-                   const Parms &parms) {
+template <typename T>
+void mark_outliers(const T *, ptrdiff_t, const T *c, ptrdiff_t cpitch, const uint8_t *c_noise, const uint8_t *c_motion,
+                   const T *, ptrdiff_t, T *o, ptrdiff_t opitch, const Parms &parms) {
     for (int y = 0; y < parms.height; ++y) {
-        parms.k->mark(c, c_noise, c_motion, o, parms.width, parms.mark_v);
+        k_mark(parms, c, c_noise, c_motion, o);
         c += cpitch;
         o += opitch;
         c_noise += parms.pitch;
@@ -632,19 +699,20 @@ void mark_outliers(const uint8_t *, ptrdiff_t, const uint8_t *c, ptrdiff_t cpitc
     }
 }
 
-void map_outliers(const uint8_t *, ptrdiff_t, const uint8_t *, ptrdiff_t, const uint8_t *c_noise,
-                  const uint8_t *c_motion, const uint8_t *, ptrdiff_t, uint8_t *o, ptrdiff_t opitch,
-                  const Parms &parms) {
+template <typename T>
+void map_outliers(const T *, ptrdiff_t, const T *, ptrdiff_t, const uint8_t *c_noise, const uint8_t *c_motion,
+                  const T *, ptrdiff_t, T *o, ptrdiff_t opitch, const Parms &parms) {
     for (int y = 0; y < parms.height; ++y) {
-        parms.k->map(c_noise, c_motion, o, parms.width);
+        k_map(parms, c_noise, c_motion, o);
         o += opitch;
         if (c_noise) c_noise += parms.pitch;
         c_motion += parms.pitch;
     }
 }
 
-void temporal_smooth(Segments &segs, const uint8_t *p, ptrdiff_t ppitch, const uint8_t *n, ptrdiff_t npitch,
-                     uint8_t *o, ptrdiff_t opitch, uint8_t *c_noise, const uint8_t *c_motion, const Parms &parms) {
+template <typename T>
+void temporal_smooth(Segments &segs, const T *p, ptrdiff_t ppitch, const T *n, ptrdiff_t npitch, T *o,
+                     ptrdiff_t opitch, uint8_t *c_noise, const uint8_t *c_motion, const Parms &parms) {
     const int width = parms.width;
     const Segment *seg = segs.data;
     for (int y = 0; y < parms.height; ++y) {
@@ -653,7 +721,7 @@ void temporal_smooth(Segments &segs, const uint8_t *p, ptrdiff_t ppitch, const u
             const int x2 = std::min<int>(seg->lx2, width - 1);
             for (int x = x1; x <= x2; ++x) c_noise[x] = 255;
         }
-        parms.k->tsmooth(p, n, o, c_noise, c_motion, width, parms.tsmooth);
+        k_tsmooth(parms, p, n, o, c_noise, c_motion);
         p += ppitch;
         n += npitch;
         o += opitch;
@@ -662,8 +730,9 @@ void temporal_smooth(Segments &segs, const uint8_t *p, ptrdiff_t ppitch, const u
     }
 }
 
-void remove_segments(Segments &segs, const uint8_t *p, ptrdiff_t Ppitch, const uint8_t *n, ptrdiff_t Npitch,
-                     uint8_t *o, ptrdiff_t Opitch, uint8_t *c_noise, const Parms &parms) {
+template <typename T>
+void remove_segments(Segments &segs, const T *p, ptrdiff_t Ppitch, const T *n, ptrdiff_t Npitch, T *o,
+                     ptrdiff_t Opitch, uint8_t *c_noise, const Parms &parms) {
     const int width = parms.width;
     const int blur = parms.blur;
     const bool fitluma = parms.fitluma;
@@ -692,10 +761,10 @@ void remove_segments(Segments &segs, const uint8_t *p, ptrdiff_t Ppitch, const u
     n += npitch * dilateY;
     c_noise += cnpitch * dilateY;
 
-    auto fill = [&](uint8_t *orow, const uint8_t *prow, const uint8_t *nrow, uint8_t *noiserow, int x1, int x2,
-                    int lumaAdd) {
+    const int maxval = parms.maxval;
+    auto fill = [&](T *orow, const T *prow, const T *nrow, uint8_t *noiserow, int x1, int x2, int lumaAdd) {
         for (int x = x1; x <= x2; ++x) {
-            orow[x] = static_cast<uint8_t>(std::min(std::max((prow[x] + nrow[x]) / 2 + lumaAdd, 0), 255));
+            orow[x] = static_cast<T>(std::min(std::max((prow[x] + nrow[x]) / 2 + lumaAdd, 0), maxval));
             noiserow[x] = 255;
         }
         if (blur) segment_blur(orow, x1, x2, blur);
@@ -744,9 +813,10 @@ void remove_segments(Segments &segs, const uint8_t *p, ptrdiff_t Ppitch, const u
     }
 }
 
-void clean_color_plane(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *n,
-                       ptrdiff_t npitch, int widthUV, int heightUV, int ssw, int ssh, const uint8_t *c_noise,
-                       uint8_t *o, ptrdiff_t opitch, const Parms &parms) {
+template <typename T>
+void clean_color_plane(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const T *n, ptrdiff_t npitch,
+                       int widthUV, int heightUV, int ssw, int ssh, const uint8_t *c_noise, T *o, ptrdiff_t opitch,
+                       const Parms &parms) {
     // chroma at removed spots: mean of previous, current and next frame
     constexpr int mult = (1 << 10) / 3;
     for (int j = 0; j < heightUV; j++) {
@@ -756,7 +826,7 @@ void clean_color_plane(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptr
         for (int k = 0; k < nr; ++k) rows[k] = c_noise + r[k] * static_cast<ptrdiff_t>(parms.pitch);
         for (int i = 0; i < widthUV; i++)
             o[i] = chroma_spot(rows, nr, i, ssw, parms.width, false)
-                       ? static_cast<uint8_t>(((p[i] + n[i] + c[i]) * mult) >> 10)
+                       ? static_cast<T>(((p[i] + n[i] + c[i]) * mult) >> 10)
                        : c[i];
         p += ppitch;
         c += cpitch;
@@ -765,11 +835,12 @@ void clean_color_plane(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptr
     }
 }
 
-void mark_color_plane(const uint8_t *c_noise, uint8_t *o, ptrdiff_t opitch, int widthUV, int heightUV, int ssw,
-                      int ssh, const Parms &parms) {
+template <typename T>
+void mark_color_plane(const uint8_t *c_noise, T *o, ptrdiff_t opitch, int widthUV, int heightUV, int ssw, int ssh,
+                      const Parms &parms) {
     // mark spots by colour (pink, green or grey depending on mark_v)
     const int mark_v = parms.mark_v;
-    const uint8_t mark_color = static_cast<uint8_t>(((mark_v + 2) % 3) * mark_v / 2);
+    const T mark_color = static_cast<T>((((mark_v + 2) % 3) * mark_v / 2) << parms.shift);
     for (int j = 0; j < heightUV; j++) {
         int r[4];
         const int nr = chroma_rows(j, ssh, parms.y_next, parms.height, r);
@@ -842,5 +913,25 @@ void print_segments(const Segments &segs, FILE *f_ptr, int fn, double frate, int
         }
     }
 }
+
+#define DESPOT_INSTANTIATE(T)                                                                                     \
+    template void find_outliers<T>(const T *, ptrdiff_t, const T *, ptrdiff_t, const T *, ptrdiff_t, uint8_t *,       \
+                                   const Parms &);                                                                    \
+    template void find_motion<T>(const T *, ptrdiff_t, const T *, ptrdiff_t, uint8_t *, const Parms &);              \
+    template void add_external_mask<T>(const T *, ptrdiff_t, int, uint8_t *, const Parms &);                          \
+    template void cond_median<T>(EXEC_ARGS(T));                                                                       \
+    template void remove_outliers<T>(EXEC_ARGS(T));                                                                   \
+    template void mark_outliers<T>(EXEC_ARGS(T));                                                                     \
+    template void map_outliers<T>(EXEC_ARGS(T));                                                                      \
+    template void remove_segments<T>(Segments &, const T *, ptrdiff_t, const T *, ptrdiff_t, T *, ptrdiff_t,          \
+                                     uint8_t *, const Parms &);                                                       \
+    template void temporal_smooth<T>(Segments &, const T *, ptrdiff_t, const T *, ptrdiff_t, T *, ptrdiff_t,          \
+                                     uint8_t *, const uint8_t *, const Parms &);                                      \
+    template void clean_color_plane<T>(const T *, ptrdiff_t, const T *, ptrdiff_t, const T *, ptrdiff_t, int, int,    \
+                                       int, int, const uint8_t *, T *, ptrdiff_t, const Parms &);                     \
+    template void mark_color_plane<T>(const uint8_t *, T *, ptrdiff_t, int, int, int, int, const Parms &);
+
+DESPOT_INSTANTIATE(uint8_t)
+DESPOT_INSTANTIATE(uint16_t)
 
 } // namespace despot

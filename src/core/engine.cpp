@@ -2,6 +2,7 @@
 // DeSpot engine: one output frame from the source frames n-2..n+2. Every map a frame needs is
 // recomputed for that frame, which gives exactly the result of the original sequential filter
 // (it cached the maps of neighbour frames) for any request order and any number of threads.
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -41,6 +42,7 @@ std::string range(const char *name, int v, int lo, int hi) {
     return std::string(name) + " must be from " + std::to_string(lo) + " to " + std::to_string(hi);
 }
 
+// w in bytes
 void copy_plane(const PlaneR &s, const PlaneW &d, int w, int h) {
     for (int y = 0; y < h; ++y) std::memcpy(d.ptr + y * d.stride, s.ptr + y * s.stride, w);
 }
@@ -103,6 +105,8 @@ Engine::Engine(const Params &p, const Format &f, int nframes, int64_t fnum, int6
     if (f.width > 32000 || f.height > 32000) throw std::runtime_error("frame size must not exceed 32000");
     if (!f.gray && (f.ssw < 0 || f.ssw > 2 || f.ssh < 0 || f.ssh > 2))
         throw std::runtime_error("chroma subsampling must be at most 4 in each direction");
+    if (f.bits < 8 || f.bits > 16) throw std::runtime_error("only integer samples with 8 to 16 bits are supported");
+    if (f.ext_bits < 8 || f.ext_bits > 16) throw std::runtime_error("extmask must have 8 to 16 bit integer samples");
 
     parms.width = f.width;
     parms.height = f.height;
@@ -134,6 +138,8 @@ Engine::Engine(const Params &p, const Format &f, int nframes, int64_t fnum, int6
     parms.color = p.color;
     parms.mscene = p.mscene;
     parms.minpts = p.minpts;
+    parms.shift = f.bits - 8;
+    parms.maxval = (1 << f.bits) - 1;
     parms.k = &kernelsFor(p.asm_opt);
     // at most one segment per two pixels of a row
     max_segments = static_cast<size_t>(f.height) * ((f.width + 1) / 2);
@@ -183,16 +189,26 @@ void Engine::writeSpots(int fn, const Segments &segs) {
 }
 
 void Engine::process(int fn, const FrameR *const src[5], const PlaneR *ext, const FrameW &dst) {
-    const Parms &P = parms;
-    const FrameR *pp = src[0], *p = src[1], *c = src[2], *n = src[3], *nn = src[4];
+    const FrameR *p = src[1], *c = src[2], *n = src[3];
     if (!p || !c || !n) throw std::runtime_error("internal error: missing neighbour frame");
     std::unique_ptr<Work> wk = acquire();
-    Work &W = *wk;
+    if (format.bits == 8)
+        processT<uint8_t>(fn, src, ext, dst, *wk);
+    else
+        processT<uint16_t>(fn, src, ext, dst, *wk);
+    release(std::move(wk));
+}
 
-    auto Y = [](const FrameR *f) { return f->plane[0].ptr; };
-    auto S = [](const FrameR *f) { return f->plane[0].stride; };
-    uint8_t *o = dst.plane[0].ptr;
-    const ptrdiff_t os = dst.plane[0].stride;
+template <typename T>
+void Engine::processT(int fn, const FrameR *const src[5], const PlaneR *ext, const FrameW &dst, Work &W) {
+    const Parms &P = parms;
+    const FrameR *pp = src[0], *p = src[1], *c = src[2], *n = src[3], *nn = src[4];
+    constexpr ptrdiff_t B = sizeof(T);
+
+    auto Y = [](const FrameR *f) { return reinterpret_cast<const T *>(f->plane[0].ptr); };
+    auto S = [](const FrameR *f) { return f->plane[0].stride / static_cast<ptrdiff_t>(sizeof(T)); };
+    T *o = reinterpret_cast<T *>(dst.plane[0].ptr);
+    const ptrdiff_t os = dst.plane[0].stride / B;
 
     // spot candidates and segments of frame b (with neighbours a, c), or none if a neighbour is missing
     auto segments_of = [&](const FrameR *a, const FrameR *b, const FrameR *d, uint8_t *noise, Segments &segs) {
@@ -206,7 +222,11 @@ void Engine::process(int fn, const FrameR *const src[5], const PlaneR *ext, cons
     };
     auto motion_pc = [&](const FrameR *a, const FrameR *b, uint8_t *m) { find_motion(Y(a), S(a), Y(b), S(b), m, P); };
     auto add_ext = [&](uint8_t *m) {
-        if (ext) add_external_mask(ext->ptr, ext->stride, m, P);
+        if (!ext) return;
+        if (format.ext_bits == 8)
+            add_external_mask(ext->ptr, ext->stride, 0, m, P);
+        else
+            add_external_mask(reinterpret_cast<const uint16_t *>(ext->ptr), ext->stride / 2, format.ext_bits - 8, m, P);
     };
 
     uint8_t *c_noise = W.noise[1].data();
@@ -215,9 +235,10 @@ void Engine::process(int fn, const FrameR *const src[5], const PlaneR *ext, cons
     uint8_t *m_motion = W.motion[2].data();
     Segments &c_segs = W.segs[1];
 
-    Exec *const exec_median[3] = {cond_median, map_outliers, map_outliers};
-    Exec *const exec_pixel[3] = {remove_outliers, mark_outliers, map_outliers};
+    Exec<T> *const exec_median[3] = {cond_median<T>, map_outliers<T>, map_outliers<T>};
+    Exec<T> *const exec_pixel[3] = {remove_outliers<T>, mark_outliers<T>, map_outliers<T>};
     const uint8_t *noise_out = c_noise; // noise map used for the chroma planes
+    const int row_bytes = P.width * static_cast<int>(B);
 
     if (params.median) { // simple median mode
         motion_pc(p, c, c_motion);
@@ -235,7 +256,7 @@ void Engine::process(int fn, const FrameR *const src[5], const PlaneR *ext, cons
         segments_of(p, c, n, c_noise, c_segs);
         if (P.seg != 0) {
             reject_on_motion(c_segs, c_motion, P);
-            copy_plane(c->plane[0], dst.plane[0], P.width, P.height);
+            copy_plane(c->plane[0], dst.plane[0], row_bytes, P.height);
             remove_segments(c_segs, Y(p), S(p), Y(n), S(n), o, os, c_noise, P);
             if (P.show == S_DENOISE) {
                 if (P.tsmooth > 0) temporal_smooth(c_segs, Y(p), S(p), Y(n), S(n), o, os, c_noise, c_motion, P);
@@ -273,7 +294,7 @@ void Engine::process(int fn, const FrameR *const src[5], const PlaneR *ext, cons
         add_ext(m_motion);
         if (P.seg != 0) {
             reject_on_motion(c_segs, m_motion, P);
-            copy_plane(c->plane[0], dst.plane[0], P.width, P.height);
+            copy_plane(c->plane[0], dst.plane[0], row_bytes, P.height);
             remove_segments(c_segs, Y(p), S(p), Y(n), S(n), o, os, c_noise, P);
             if (P.show == S_DENOISE) {
                 if (P.tsmooth > 0) temporal_smooth(c_segs, Y(p), S(p), Y(n), S(n), o, os, c_noise, c_motion, P);
@@ -291,23 +312,26 @@ void Engine::process(int fn, const FrameR *const src[5], const PlaneR *ext, cons
     if (!format.gray) {
         const int cw = format.width >> format.ssw;
         const int ch = format.height >> format.ssh;
+        const T grey = static_cast<T>(128 << P.shift);
         for (int pl = 1; pl < 3; ++pl) {
             const PlaneW &d = dst.plane[pl];
+            T *dp = reinterpret_cast<T *>(d.ptr);
+            const ptrdiff_t ds = d.stride / B;
+            auto C = [&](const FrameR *f) { return reinterpret_cast<const T *>(f->plane[pl].ptr); };
+            auto CS = [&](const FrameR *f) { return f->plane[pl].stride / B; };
             if (P.show == S_MAP && !P.show_chroma) { // grey map
-                for (int y = 0; y < ch; ++y) std::memset(d.ptr + y * d.stride, 0x80, cw);
+                for (int y = 0; y < ch; ++y) std::fill(dp + y * ds, dp + y * ds + cw, grey);
             } else if (P.show == S_MARK && !P.median) { // mark noise by colour in V
-                copy_plane(c->plane[pl], d, cw, ch);
-                if (pl == 2) mark_color_plane(noise_out, d.ptr, d.stride, cw, ch, format.ssw, format.ssh, P);
+                copy_plane(c->plane[pl], d, cw * static_cast<int>(B), ch);
+                if (pl == 2) mark_color_plane(noise_out, dp, ds, cw, ch, format.ssw, format.ssh, P);
             } else if (P.show == S_DENOISE && P.color && !P.median) { // clean colour at spots
-                clean_color_plane(p->plane[pl].ptr, p->plane[pl].stride, c->plane[pl].ptr, c->plane[pl].stride,
-                                  n->plane[pl].ptr, n->plane[pl].stride, cw, ch, format.ssw, format.ssh, noise_out,
-                                  d.ptr, d.stride, P);
+                clean_color_plane(C(p), CS(p), C(c), CS(c), C(n), CS(n), cw, ch, format.ssw, format.ssh, noise_out,
+                                  dp, ds, P);
             } else {
-                copy_plane(c->plane[pl], d, cw, ch);
+                copy_plane(c->plane[pl], d, cw * static_cast<int>(B), ch);
             }
         }
     }
-    release(std::move(wk));
 }
 
 } // namespace despot

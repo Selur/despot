@@ -24,19 +24,21 @@ public:
         } catch (const AvisynthError &) {
             has_v8_ = false;
         }
-        if (!vi.IsPlanar() || !(vi.IsYUV() || vi.IsYUVA()) || vi.BitsPerComponent() != 8)
-            env->ThrowError("DeSpot: input must be 8 bit planar YUV(A) or Y (YV12, YV16, YV24, YV411, Y8, ...)");
+        if (!vi.IsPlanar() || !(vi.IsYUV() || vi.IsYUVA()) || vi.BitsPerComponent() > 16)
+            env->ThrowError("DeSpot: input must be 8..16 bit planar YUV(A) or Y");
         Format f;
         f.width = vi.width;
         f.height = vi.height;
         f.gray = vi.IsY();
         f.ssw = f.gray ? 0 : vi.GetPlaneWidthSubsampling(PLANAR_U);
         f.ssh = f.gray ? 0 : vi.GetPlaneHeightSubsampling(PLANAR_U);
+        f.bits = vi.BitsPerComponent();
         if (extmask_) {
             const VideoInfo &evi = extmask_->GetVideoInfo();
-            if (evi.width != vi.width || evi.height != vi.height || !evi.IsPlanar() || evi.BitsPerComponent() != 8)
-                env->ThrowError("DeSpot: extmask must be an 8 bit planar clip of the same size");
+            if (evi.width != vi.width || evi.height != vi.height || !evi.IsPlanar() || evi.BitsPerComponent() > 16)
+                env->ThrowError("DeSpot: extmask must be an 8..16 bit planar clip of the same size");
             ext_frames_ = evi.num_frames;
+            f.ext_bits = evi.BitsPerComponent();
         }
         try {
             engine_ = std::make_unique<Engine>(p, f, vi.num_frames, vi.fps_numerator, vi.fps_denominator);

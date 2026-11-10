@@ -99,6 +99,8 @@ struct Parms {
     bool color = false;
     int mscene = 40;
     int minpts = 0;
+    int shift = 0;      // bit depth - 8
+    int maxval = 255;   // largest sample value
     const Kernels *k = nullptr;
 };
 
@@ -149,38 +151,48 @@ struct Segments {
 // Writes the two sentinels behind segs.end (after segs.clear() or new segments).
 void finish_segments(Segments &segs);
 
-void find_outliers(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *n,
-                   ptrdiff_t npitch, uint8_t *noise, const Parms &);
+// Sample functions: T is uint8_t (8 bit) or uint16_t (9..16 bit); pitches are in samples.
+template <typename T>
+void find_outliers(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const T *n, ptrdiff_t npitch,
+                   uint8_t *noise, const Parms &);
 void find_sizes(uint8_t *noise, Segments &segs, const Parms &);
 void mark_noise(Segments &segs, uint8_t *noise, const Parms &);
 void reject_on_motion(Segments &segs, const uint8_t *motion, const Parms &);
-void find_motion(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, uint8_t *motion,
-                 const Parms &);
+template <typename T>
+void find_motion(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, uint8_t *motion, const Parms &);
 void motion_denoise(uint8_t *motion, const Parms &);
 void noise_dilate(uint8_t *noise, const Parms &);
 void motion_scene(uint8_t *motion, const Parms &);
 void motion_merge(const uint8_t *c_motion, const uint8_t *n_motion, uint8_t *m_motion, const Parms &);
 void noise_to_one(const uint8_t *p_noise, const uint8_t *c_noise, uint8_t *c_motion, const Parms &);
-void add_external_mask(const uint8_t *ext, ptrdiff_t ext_pitch, uint8_t *motion, const Parms &);
+// ext_shift: bit depth of the mask - 8
+template <typename E>
+void add_external_mask(const E *ext, ptrdiff_t ext_pitch, int ext_shift, uint8_t *motion, const Parms &);
 
-typedef void Exec(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *c_noise,
-                  const uint8_t *c_motion, const uint8_t *n, ptrdiff_t npitch, uint8_t *o, ptrdiff_t opitch,
-                  const Parms &);
-Exec cond_median;
-Exec remove_outliers;
-Exec mark_outliers;
-Exec map_outliers;
+#define EXEC_ARGS(T)                                                                                                  \
+    const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const uint8_t *c_noise, const uint8_t *c_motion,      \
+        const T *n, ptrdiff_t npitch, T *o, ptrdiff_t opitch, const Parms &
+template <typename T>
+using Exec = void(EXEC_ARGS(T));
+template <typename T> void cond_median(EXEC_ARGS(T));
+template <typename T> void remove_outliers(EXEC_ARGS(T));
+template <typename T> void mark_outliers(EXEC_ARGS(T));
+template <typename T> void map_outliers(EXEC_ARGS(T));
 
-void remove_segments(Segments &segs, const uint8_t *p, ptrdiff_t ppitch, const uint8_t *n, ptrdiff_t npitch,
-                     uint8_t *o, ptrdiff_t opitch, uint8_t *c_noise, const Parms &);
-void temporal_smooth(Segments &segs, const uint8_t *p, ptrdiff_t ppitch, const uint8_t *n, ptrdiff_t npitch,
-                     uint8_t *o, ptrdiff_t opitch, uint8_t *c_noise, const uint8_t *c_motion, const Parms &);
+template <typename T>
+void remove_segments(Segments &segs, const T *p, ptrdiff_t ppitch, const T *n, ptrdiff_t npitch, T *o,
+                     ptrdiff_t opitch, uint8_t *c_noise, const Parms &);
+template <typename T>
+void temporal_smooth(Segments &segs, const T *p, ptrdiff_t ppitch, const T *n, ptrdiff_t npitch, T *o,
+                     ptrdiff_t opitch, uint8_t *c_noise, const uint8_t *c_motion, const Parms &);
 // ssw/ssh: log2 chroma subsampling, 0..2 each (420: 1/1, 422: 1/0, 444: 0/0, 411: 2/0, 440: 0/1, 410: 2/2)
-void clean_color_plane(const uint8_t *p, ptrdiff_t ppitch, const uint8_t *c, ptrdiff_t cpitch, const uint8_t *n,
-                       ptrdiff_t npitch, int widthUV, int heightUV, int ssw, int ssh, const uint8_t *c_noise,
-                       uint8_t *o, ptrdiff_t opitch, const Parms &);
-void mark_color_plane(const uint8_t *c_noise, uint8_t *o, ptrdiff_t opitch, int widthUV, int heightUV, int ssw,
-                      int ssh, const Parms &);
+template <typename T>
+void clean_color_plane(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const T *n, ptrdiff_t npitch,
+                       int widthUV, int heightUV, int ssw, int ssh, const uint8_t *c_noise, T *o, ptrdiff_t opitch,
+                       const Parms &);
+template <typename T>
+void mark_color_plane(const uint8_t *c_noise, T *o, ptrdiff_t opitch, int widthUV, int heightUV, int ssw, int ssh,
+                      const Parms &);
 void print_segments(const Segments &segs, FILE *f, int fn, double frate, int w, int h, int spotmax1, int spotmax2);
 
 // ---------------------------------------------------------------------------------------------
@@ -208,6 +220,8 @@ struct Format {
     int ssw = 1; // log2 horizontal chroma subsampling
     int ssh = 1; // log2 vertical chroma subsampling
     bool gray = false;
+    int bits = 8;     // 8..16 bit integer samples
+    int ext_bits = 8; // bit depth of extmask
 };
 
 class Engine {
@@ -225,14 +239,16 @@ public:
     bool processes(int n) const { return n > 0 && n < num_frames - 1; }
     bool usesOutfile() const { return outfile != nullptr; }
 
-    // src[i] is source frame n - 2 + i, or null when outside the clip (or not needed).
-    // ext: luma of the extmask frame n, or null.
+    // src[i] is source frame n - 2 + i, or null when outside the clip (or not needed); strides in bytes.
+    // ext: first plane of the extmask frame n, or null.
     void process(int n, const FrameR *const src[5], const PlaneR *ext, const FrameW &dst);
 
 private:
     struct Work;
     std::unique_ptr<Work> acquire();
     void release(std::unique_ptr<Work> w);
+    template <typename T>
+    void processT(int n, const FrameR *const src[5], const PlaneR *ext, const FrameW &dst, Work &w);
     void writeSpots(int n, const Segments &segs);
 
     Params params;

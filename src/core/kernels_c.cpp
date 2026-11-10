@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "kernels.hpp"
+#include "kernels16_ref.hpp"
 
 namespace despot {
 
@@ -153,12 +154,59 @@ int nextAboveC(const uint8_t *l, int x, int w, uint8_t thr) {
     return x;
 }
 
+void outliers16C(const uint16_t *p, const uint16_t *n, const uint16_t *c, uint8_t *o, int w, int sign, bool ranked,
+                 uint8_t p1, int shift) {
+    std::memset(o, 0, w);
+    if (ranked)
+        ref16::outliers(p, n, c, o, 1, w - 1, sign, true, p1, shift);
+    else
+        ref16::outliers(p, n, c, o, 0, w, sign, false, p1, shift);
+}
+
+void motion16C(const uint16_t *p, const uint16_t *c, uint8_t *m, int w, uint16_t thr) {
+    ref16::motion(p, c, m, 0, w, thr);
+}
+
+void lumaSums16C(const uint16_t *c, const uint16_t *p, const uint16_t *n, int w, int64_t *sc, int64_t *spn) {
+    int64_t a = 0, b = 0;
+    ref16::luma_sums(c, p, n, 0, w, a, b);
+    *sc = a;
+    *spn = b;
+}
+
+void remove16C(const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *noise, const uint8_t *motion,
+               uint16_t *o, int w, int lumad, uint16_t maxval) {
+    ref16::remove(p, n, c, noise, motion, o, 0, w, lumad, maxval);
+}
+
+void mark16C(const uint16_t *c, const uint8_t *noise, const uint8_t *motion, uint16_t *o, int w, uint16_t mark_v,
+             int shift) {
+    ref16::mark(c, noise, motion, o, 0, w, mark_v, shift);
+}
+
+void map16C(const uint8_t *noise, const uint8_t *motion, uint16_t *o, int w, int shift) {
+    ref16::map(noise, motion, o, 0, w, shift);
+}
+
+void tsmooth16C(const uint16_t *p, const uint16_t *n, uint16_t *o, const uint8_t *noise, const uint8_t *motion, int w,
+                int limit) {
+    ref16::tsmooth(p, n, o, noise, motion, 0, w, limit);
+}
+
+void median16C(const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *motion, uint16_t *o, int w) {
+    ref16::median(p, n, c, motion, o, 0, w);
+}
+
+void extMask16C(const uint16_t *ext, uint8_t *m, int w, int shift) { ref16::ext_mask(ext, m, 0, w, shift); }
+
 } // namespace
 
 const Kernels &kernelsC() {
-    static const Kernels k = {outliersC, motionC,  colsumC,     windowC,  binarizeC,     lumaSumsC,
-                              removeC,   markC,    mapC,        mergeC,   noiseToOneC,   tsmoothC,
-                              medianC,   countNonzeroC, extMaskC, nextAboveC};
+    static const Kernels k = {outliersC,  motionC,  colsumC,       windowC,   binarizeC,   lumaSumsC,
+                              removeC,    markC,    mapC,          mergeC,    noiseToOneC, tsmoothC,
+                              medianC,    countNonzeroC, extMaskC, nextAboveC,
+                              outliers16C, motion16C, lumaSums16C, remove16C, mark16C,     map16C,
+                              tsmooth16C, median16C, extMask16C};
     return k;
 }
 

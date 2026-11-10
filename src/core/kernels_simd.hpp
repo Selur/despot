@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "kernels.hpp"
+#include "kernels16_ref.hpp"
 
 namespace {
 
@@ -300,12 +301,192 @@ int nextAboveT(const uint8_t *l, int x, int w, uint8_t thr) {
     return x;
 }
 
+// ---- 9..16 bit samples: V::U holds V::N / 2 unsigned 16 bit lanes ----
+
+template <class V>
+inline typename V::U nz16(typename V::U a) { // 0xFFFF where a != 0
+    return V::andnot16u(V::cmpeq16u(a, V::zero16()), V::set16u(0xFFFF));
+}
+
+template <class V>
+inline typename V::U sel16V(typename V::U m, typename V::U a, typename V::U b) {
+    return V::or16u(V::and16u(m, a), V::andnot16u(m, b));
+}
+
+template <class V>
+inline typename V::U outlier16V(typename V::U c, typename V::U mn, typename V::U mx, int sign, typename V::U vp1,
+                                int shift) {
+    const typename V::U v255 = V::set16u(255);
+    const typename V::U below = V::min16u(V::srl16(V::subs16u(mn, c), shift), v255);
+    const typename V::U above = V::min16u(V::srl16(V::subs16u(c, mx), shift), v255);
+    switch (sign) {
+    case 1: return below;
+    case -1: return above;
+    case 2: return V::or16u(below, V::min16u(above, vp1));
+    case -2: return V::or16u(above, V::min16u(below, vp1));
+    default: return V::or16u(below, above); // at most one of them is non-zero
+    }
+}
+
+template <class V>
+void outliers16T(const uint16_t *p, const uint16_t *n, const uint16_t *c, uint8_t *o, int w, int sign, bool ranked,
+                 uint8_t p1, int shift) {
+    using U = typename V::U;
+    constexpr int H = V::N / 2;
+    const U vp1 = V::set16u(p1);
+    if (ranked) {
+        if (w <= 0) return;
+        o[0] = 0;
+        o[w - 1] = 0;
+        int x = 1;
+        for (; x + V::N <= w - 1; x += V::N) {
+            U r[2];
+            for (int h = 0; h < 2; ++h) {
+                const int xi = x + h * H;
+                const U pl = V::load16(p + xi - 1), pc = V::load16(p + xi), pr = V::load16(p + xi + 1);
+                const U nl = V::load16(n + xi - 1), nc = V::load16(n + xi), nr = V::load16(n + xi + 1);
+                const U mn = V::min16u(V::min16u(V::min16u(pl, nl), V::min16u(pc, nc)), V::min16u(pr, nr));
+                const U mx = V::max16u(V::max16u(V::max16u(pl, nl), V::max16u(pc, nc)), V::max16u(pr, nr));
+                r[h] = outlier16V<V>(V::load16(c + xi), mn, mx, sign, vp1, shift);
+            }
+            V::store(o + x, V::narrow(r[0], r[1]));
+        }
+        despot::ref16::outliers(p, n, c, o, x, w - 1, sign, true, p1, shift);
+    } else {
+        int x = 0;
+        for (; x + V::N <= w; x += V::N) {
+            U r[2];
+            for (int h = 0; h < 2; ++h) {
+                const int xi = x + h * H;
+                const U pv = V::load16(p + xi), nv = V::load16(n + xi);
+                r[h] = outlier16V<V>(V::load16(c + xi), V::min16u(pv, nv), V::max16u(pv, nv), sign, vp1, shift);
+            }
+            V::store(o + x, V::narrow(r[0], r[1]));
+        }
+        despot::ref16::outliers(p, n, c, o, x, w, sign, false, p1, shift);
+    }
+}
+
+template <class V>
+void motion16T(const uint16_t *p, const uint16_t *c, uint8_t *m, int w, uint16_t thr) {
+    using U = typename V::U;
+    constexpr int H = V::N / 2;
+    const U vthr = V::set16u(thr), three = V::set16u(3);
+    int x = 0;
+    for (; x + V::N <= w; x += V::N) {
+        U r[2];
+        for (int h = 0; h < 2; ++h) {
+            const U a = V::load16(p + x + h * H), b = V::load16(c + x + h * H);
+            const U d = V::or16u(V::subs16u(a, b), V::subs16u(b, a));
+            r[h] = V::and16u(nz16<V>(V::subs16u(d, vthr)), three);
+        }
+        V::store(m + x, V::narrow(r[0], r[1]));
+    }
+    despot::ref16::motion(p, c, m, x, w, thr);
+}
+
+template <class V>
+void remove16T(const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *noise, const uint8_t *motion,
+               uint16_t *o, int w, int lumad, uint16_t maxval) {
+    using U = typename V::U;
+    constexpr int H = V::N / 2;
+    const U one = V::set16u(1), vmax = V::set16u(maxval);
+    const U vadd = V::set16u(std::min(std::max(lumad, 0), 65535));
+    const U vsub = V::set16u(std::min(std::max(-lumad, 0), 65535));
+    int x = 0;
+    for (; x + H <= w; x += H) {
+        const U a = V::load16(p + x), b = V::load16(n + x);
+        const U avg = V::sub16u(V::avg16u(a, b), V::and16u(V::xor16u(a, b), one)); // (a + b) >> 1
+        const U v = V::min16u(V::subs16u(V::adds16u(avg, vadd), vsub), vmax);
+        const U m = V::andnot16u(V::nz8to16(motion + x), V::nz8to16(noise + x));
+        V::store16(o + x, sel16V<V>(m, v, V::load16(c + x)));
+    }
+    despot::ref16::remove(p, n, c, noise, motion, o, x, w, lumad, maxval);
+}
+
+template <class V>
+void mark16T(const uint16_t *c, const uint8_t *noise, const uint8_t *motion, uint16_t *o, int w, uint16_t mark_v,
+             int shift) {
+    using U = typename V::U;
+    constexpr int H = V::N / 2;
+    const U mv = V::set16u(mark_v);
+    const U v3 = V::set16u(mark_v >= 1 ? mark_v - 1 : 1);
+    const U base = V::set16u(126 << shift);
+    int x = 0;
+    for (; x + H <= w; x += H) {
+        const U cv = V::load16(c + x);
+        const U nn = V::nz8to16(noise + x), nm = V::nz8to16(motion + x);
+        const U case1 = V::andnot16u(nm, nn); // noise, no motion
+        const U case2 = V::andnot16u(nn, nm); // motion, no noise
+        const U case3 = V::cmpeq16u(cv, mv);
+        U r = sel16V<V>(case3, v3, cv);
+        r = sel16V<V>(case2, V::add16u(base, V::srl16(cv, 1)), r);
+        r = sel16V<V>(case1, mv, r);
+        V::store16(o + x, r);
+    }
+    despot::ref16::mark(c, noise, motion, o, x, w, mark_v, shift);
+}
+
+template <class V>
+void map16T(const uint8_t *noise, const uint8_t *motion, uint16_t *o, int w, int shift) {
+    using U = typename V::U;
+    constexpr int H = V::N / 2;
+    const U v255 = V::set16u(255 << shift), v159 = V::set16u(159 << shift), v95 = V::set16u(95 << shift);
+    int x = 0;
+    for (; x + H <= w; x += H) {
+        const U nm = V::nz8to16(motion + x);
+        const U nn = noise ? V::nz8to16(noise + x) : V::zero16();
+        V::store16(o + x, sel16V<V>(nn, sel16V<V>(nm, v159, v255), V::and16u(nm, v95)));
+    }
+    despot::ref16::map(noise, motion, o, x, w, shift);
+}
+
+template <class V>
+void median16T(const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *motion, uint16_t *o, int w) {
+    using U = typename V::U;
+    constexpr int H = V::N / 2;
+    int x = 0;
+    for (; x + H <= w; x += H) {
+        const U pv = V::load16(p + x), nv = V::load16(n + x), cv = V::load16(c + x);
+        const U med = V::min16u(V::max16u(pv, nv), V::max16u(V::min16u(pv, nv), cv));
+        V::store16(o + x, sel16V<V>(V::nz8to16(motion + x), cv, med));
+    }
+    despot::ref16::median(p, n, c, motion, o, x, w);
+}
+
+template <class V>
+void extMask16T(const uint16_t *ext, uint8_t *m, int w, int shift) {
+    using U = typename V::U;
+    constexpr int H = V::N / 2;
+    const U thr = V::set16u((128 << shift) - 1), v255 = V::set16u(255);
+    int x = 0;
+    for (; x + V::N <= w; x += V::N) {
+        const U e0 = V::and16u(nz16<V>(V::subs16u(V::load16(ext + x), thr)), v255);
+        const U e1 = V::and16u(nz16<V>(V::subs16u(V::load16(ext + x + H), thr)), v255);
+        V::store(m + x, V::or_(V::load(m + x), V::narrow(e0, e1)));
+    }
+    despot::ref16::ext_mask(ext, m, x, w, shift);
+}
+
+inline void lumaSums16S(const uint16_t *c, const uint16_t *p, const uint16_t *n, int w, int64_t *sc, int64_t *spn) {
+    int64_t a = 0, b = 0;
+    despot::ref16::luma_sums(c, p, n, 0, w, a, b);
+    *sc = a;
+    *spn = b;
+}
+
+inline void tsmooth16S(const uint16_t *p, const uint16_t *n, uint16_t *o, const uint8_t *noise, const uint8_t *motion,
+                       int w, int limit) {
+    despot::ref16::tsmooth(p, n, o, noise, motion, 0, w, limit);
+}
+
 template <class V>
 const Kernels &makeKernels() {
     static const Kernels k = {outliersT<V>, motionT<V>,    V::colsum,     V::window,     binarizeT<V>,
                               lumaSumsT<V>, removeT<V>,    markT<V>,      mapT<V>,       mergeT<V>,
                               noiseToOneT<V>, tsmoothT<V>, medianT<V>,    countNonzeroT<V>, extMaskT<V>,
-                              nextAboveT<V>};
+                              nextAboveT<V>,  outliers16T<V>, motion16T<V>, lumaSums16S, remove16T<V>,
+                              mark16T<V>,     map16T<V>,   tsmooth16S,    median16T<V>, extMask16T<V>};
     return k;
 }
 

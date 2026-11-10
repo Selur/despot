@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Every SIMD kernel table against the C kernels on random data; exit code 1 on any mismatch.
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <random>
 #include <string>
@@ -35,6 +36,88 @@ void check(bool ok, const char *isa, const char *what, int w, const std::string 
     if (!ok) {
         ++failures;
         if (failures < 50) std::printf("MISMATCH %s %s w=%d %s\n", isa, what, w, extra.c_str());
+    }
+}
+
+// Random 9..16 bit samples: full range, near the maximum, or a narrow range (equal values).
+std::vector<uint16_t> samples(int n, int bits, int mode) {
+    const int maxv = (1 << bits) - 1;
+    std::vector<uint16_t> v(n + 64);
+    const int mid = rnd(0, maxv);
+    for (auto &s : v) {
+        switch (mode) {
+        case 0: s = static_cast<uint16_t>(rnd(0, maxv)); break;
+        case 1: s = static_cast<uint16_t>(rnd(std::max(0, maxv - 300), maxv)); break;
+        default: s = static_cast<uint16_t>(std::min(maxv, std::max(0, mid + rnd(-600, 600)))); break;
+        }
+    }
+    return v;
+}
+
+void test16(const Kernels &k, const char *isa) {
+    const Kernels &c = kernelsC();
+    for (int iter = 0; iter < 3000; ++iter) {
+        const int bits = rnd(9, 16), shift = bits - 8, maxv = (1 << bits) - 1;
+        const int w = iter < 200 ? iter % 100 + 1 : rnd(1, 700);
+        const int mode = rnd(0, 2);
+        auto p = samples(w, bits, mode), n = samples(w, bits, mode), cc = samples(w, bits, mode);
+        auto noise = bytes(w, rnd(1, 2)), motion = bytes(w, rnd(1, 2));
+        std::vector<uint8_t> o1(w + 64, 7), o2(w + 64, 7);
+        std::vector<uint16_t> q1(w + 64, 7), q2(w + 64, 7);
+        const std::string tag = " bits=" + std::to_string(bits);
+
+        for (int sign = -2; sign <= 2; ++sign)
+            for (int ranked = 0; ranked < 2; ++ranked) {
+                const uint8_t p1 = static_cast<uint8_t>(rnd(0, 255));
+                c.outliers16(p.data(), n.data(), cc.data(), o1.data(), w, sign, ranked != 0, p1, shift);
+                k.outliers16(p.data(), n.data(), cc.data(), o2.data(), w, sign, ranked != 0, p1, shift);
+                check(o1 == o2, isa, "outliers16", w, tag + " sign=" + std::to_string(sign));
+            }
+
+        const uint16_t thr = static_cast<uint16_t>(rnd(0, 255) << shift);
+        c.motion16(p.data(), cc.data(), o1.data(), w, thr);
+        k.motion16(p.data(), cc.data(), o2.data(), w, thr);
+        check(o1 == o2, isa, "motion16", w, tag);
+
+        int64_t a1, b1, a2, b2;
+        c.luma_sums16(cc.data(), p.data(), n.data(), w, &a1, &b1);
+        k.luma_sums16(cc.data(), p.data(), n.data(), w, &a2, &b2);
+        check(a1 == a2 && b1 == b2, isa, "luma_sums16", w, tag);
+
+        const int lumad = rnd(-maxv - 10, maxv + 10);
+        c.remove16(p.data(), n.data(), cc.data(), noise.data(), motion.data(), q1.data(), w, lumad,
+                   static_cast<uint16_t>(maxv));
+        k.remove16(p.data(), n.data(), cc.data(), noise.data(), motion.data(), q2.data(), w, lumad,
+                   static_cast<uint16_t>(maxv));
+        check(q1 == q2, isa, "remove16", w, tag + " lumad=" + std::to_string(lumad));
+
+        const uint16_t mv = static_cast<uint16_t>(rnd(0, 3) ? rnd(0, 255) << shift : 0);
+        if (rnd(0, 1)) cc[rnd(0, w - 1)] = mv; // make c == mark_v occur
+        c.mark16(cc.data(), noise.data(), motion.data(), q1.data(), w, mv, shift);
+        k.mark16(cc.data(), noise.data(), motion.data(), q2.data(), w, mv, shift);
+        check(q1 == q2, isa, "mark16", w, tag);
+
+        c.map16(noise.data(), motion.data(), q1.data(), w, shift);
+        k.map16(noise.data(), motion.data(), q2.data(), w, shift);
+        check(q1 == q2, isa, "map16", w, tag);
+        c.map16(nullptr, motion.data(), q1.data(), w, shift);
+        k.map16(nullptr, motion.data(), q2.data(), w, shift);
+        check(q1 == q2, isa, "map16(null)", w, tag);
+
+        auto t1 = cc, t2 = cc;
+        const int limit = rnd(1, 255) << shift;
+        c.tsmooth16(p.data(), n.data(), t1.data(), noise.data(), motion.data(), w, limit);
+        k.tsmooth16(p.data(), n.data(), t2.data(), noise.data(), motion.data(), w, limit);
+        check(t1 == t2, isa, "tsmooth16", w, tag);
+
+        c.median16(p.data(), n.data(), cc.data(), motion.data(), q1.data(), w);
+        k.median16(p.data(), n.data(), cc.data(), motion.data(), q2.data(), w);
+        check(q1 == q2, isa, "median16", w, tag);
+
+        auto e1 = motion, e2 = motion;
+        c.ext_mask16(p.data(), e1.data(), w, shift);
+        k.ext_mask16(p.data(), e2.data(), w, shift);
+        check(e1 == e2, isa, "ext_mask16", w, tag);
     }
 }
 
@@ -141,6 +224,7 @@ void testTable(const Kernels &k, const char *isa) {
         k.window(r1.data() + pad, w, rad, gate ? noise.data() : nullptr, wthr, val, o2.data(), tmp.data());
         check(o1 == o2, isa, "window", w, "rad=" + std::to_string(rad));
     }
+    test16(k, isa);
 }
 
 } // namespace

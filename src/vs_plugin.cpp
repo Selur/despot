@@ -100,9 +100,9 @@ void VS_CC create(const VSMap *in, VSMap *out, void *, VSCore *core, const VSAPI
     };
 
     const VSVideoFormat &f = d->vi.format;
-    if (!vsh::isConstantVideoFormat(&d->vi) || f.sampleType != stInteger || f.bitsPerSample != 8 ||
+    if (!vsh::isConstantVideoFormat(&d->vi) || f.sampleType != stInteger || f.bitsPerSample > 16 ||
         (f.colorFamily != cfYUV && f.colorFamily != cfGray))
-        return fail("clip must be 8 bit YUV or Gray with constant format and size");
+        return fail("clip must be 8..16 bit integer YUV or Gray with constant format and size");
 
     Params p;
     int err;
@@ -151,8 +151,8 @@ void VS_CC create(const VSMap *in, VSMap *out, void *, VSCore *core, const VSAPI
     if (d->extmask) {
         const VSVideoInfo *evi = vsapi->getVideoInfo(d->extmask);
         if (evi->width != d->vi.width || evi->height != d->vi.height || evi->format.sampleType != stInteger ||
-            evi->format.bitsPerSample != 8)
-            return fail("extmask must be an 8 bit clip of the same size");
+            evi->format.bitsPerSample > 16)
+            return fail("extmask must be an 8..16 bit integer clip of the same size");
         d->ext_frames = evi->numFrames;
     }
 
@@ -162,6 +162,8 @@ void VS_CC create(const VSMap *in, VSMap *out, void *, VSCore *core, const VSAPI
     fmt.gray = f.colorFamily == cfGray;
     fmt.ssw = f.subSamplingW;
     fmt.ssh = f.subSamplingH;
+    fmt.bits = f.bitsPerSample;
+    fmt.ext_bits = d->extmask ? vsapi->getVideoInfo(d->extmask)->format.bitsPerSample : 8;
     try {
         d->engine = std::make_unique<Engine>(p, fmt, d->vi.numFrames, d->vi.fpsNum > 0 ? d->vi.fpsNum : 25,
                                              d->vi.fpsNum > 0 ? d->vi.fpsDen : 1);

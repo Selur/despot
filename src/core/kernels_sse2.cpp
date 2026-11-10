@@ -47,6 +47,33 @@ struct VSse2 {
     static W andnot16(W a, W b) { return _mm_andnot_si128(a, b); }
     static W sel16(W m, W a, W b) { return _mm_or_si128(_mm_and_si128(m, a), _mm_andnot_si128(m, b)); }
 
+    // unsigned 16 bit lanes; SSE2 has only signed 16 bit min/max: flip the sign bit around them
+    using U = __m128i;
+    static U zero16() { return _mm_setzero_si128(); }
+    static U set16u(int v) { return _mm_set1_epi16(static_cast<short>(v)); }
+    static U load16(const uint16_t *p) { return _mm_loadu_si128(reinterpret_cast<const __m128i *>(p)); }
+    static void store16(uint16_t *p, U v) { _mm_storeu_si128(reinterpret_cast<__m128i *>(p), v); }
+    static U flip(U a) { return _mm_xor_si128(a, _mm_set1_epi16(static_cast<short>(0x8000))); }
+    static U min16u(U a, U b) { return flip(_mm_min_epi16(flip(a), flip(b))); }
+    static U max16u(U a, U b) { return flip(_mm_max_epi16(flip(a), flip(b))); }
+    static U subs16u(U a, U b) { return _mm_subs_epu16(a, b); }
+    static U adds16u(U a, U b) { return _mm_adds_epu16(a, b); }
+    static U add16u(U a, U b) { return _mm_add_epi16(a, b); }
+    static U sub16u(U a, U b) { return _mm_sub_epi16(a, b); }
+    static U avg16u(U a, U b) { return _mm_avg_epu16(a, b); }
+    static U and16u(U a, U b) { return _mm_and_si128(a, b); }
+    static U or16u(U a, U b) { return _mm_or_si128(a, b); }
+    static U xor16u(U a, U b) { return _mm_xor_si128(a, b); }
+    static U andnot16u(U a, U b) { return _mm_andnot_si128(a, b); }
+    static U cmpeq16u(U a, U b) { return _mm_cmpeq_epi16(a, b); }
+    static U srl16(U a, int k) { return _mm_srl_epi16(a, _mm_cvtsi32_si128(k)); }
+    static U nz8to16(const uint8_t *p) { // 0xFFFF where p[i] != 0, 8 bytes
+        const __m128i z = _mm_setzero_si128();
+        const __m128i b = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i *>(p)), z);
+        return _mm_andnot_si128(_mm_cmpeq_epi16(b, z), _mm_set1_epi16(-1));
+    }
+    static T narrow(U a, U b) { return _mm_packus_epi16(a, b); } // lanes <= 255
+
     static void colsum(int32_t *r, const uint8_t *sub, const uint8_t *add, int w) {
         const __m128i z = _mm_setzero_si128();
         int x = 0;

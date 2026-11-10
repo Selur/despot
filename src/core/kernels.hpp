@@ -52,6 +52,28 @@ struct Kernels {
     void (*ext_mask)(const uint8_t *ext, uint8_t *m, int w);
     // first index >= x with l[i] > thr, or w
     int (*next_above)(const uint8_t *l, int x, int w, uint8_t thr);
+
+    // 9..16 bit samples (shift = bits - 8). The noise and motion maps stay 8 bit.
+    // outliers: o[x] = min(difference >> shift, 255), then as the 8 bit kernel (p1 in 8 bit units)
+    void (*outliers16)(const uint16_t *p, const uint16_t *n, const uint16_t *c, uint8_t *o, int w, int sign,
+                       bool ranked, uint8_t p1, int shift);
+    // m[x] = |p[x] - c[x]| > thr ? 3 : 0 (thr in sample units)
+    void (*motion16)(const uint16_t *p, const uint16_t *c, uint8_t *m, int w, uint16_t thr);
+    void (*luma_sums16)(const uint16_t *c, const uint16_t *p, const uint16_t *n, int w, int64_t *sc, int64_t *spn);
+    // o[x] = (noise && !motion) ? clamp(((p + n) >> 1) + lumad, 0, maxval) : c
+    void (*remove16)(const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *noise,
+                     const uint8_t *motion, uint16_t *o, int w, int lumad, uint16_t maxval);
+    // show=1 marking: mark_v and 126 are scaled by << shift
+    void (*mark16)(const uint16_t *c, const uint8_t *noise, const uint8_t *motion, uint16_t *o, int w,
+                   uint16_t mark_v, int shift);
+    // show=2 map: 255, 159, 95 scaled by << shift; noise may be null
+    void (*map16)(const uint8_t *noise, const uint8_t *motion, uint16_t *o, int w, int shift);
+    void (*tsmooth16)(const uint16_t *p, const uint16_t *n, uint16_t *o, const uint8_t *noise,
+                      const uint8_t *motion, int w, int limit);
+    void (*median16)(const uint16_t *p, const uint16_t *n, const uint16_t *c, const uint8_t *motion, uint16_t *o,
+                     int w);
+    // m[x] = (ext[x] >> shift) > 127 ? 255 : m[x]
+    void (*ext_mask16)(const uint16_t *ext, uint8_t *m, int w, int shift);
 };
 
 const Kernels &kernelsC();
