@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
 
 #include "despot.hpp"
 
@@ -45,6 +46,13 @@ std::string range(const char *name, int v, int lo, int hi) {
 // w in bytes
 void copy_plane(const PlaneR &s, const PlaneW &d, int w, int h) {
     for (int y = 0; y < h; ++y) std::memcpy(d.ptr + y * d.stride, s.ptr + y * s.stride, w);
+}
+
+// Copies count segments plus the two sentinels; links (nowis) are moved into the destination array.
+void copy_segments(const Segment *src, size_t count, Segment *dst) {
+    std::memcpy(static_cast<void *>(dst), src, (count + 2) * sizeof(Segment));
+    for (size_t i = 0; i < count; ++i)
+        if (dst[i].data.nowis) dst[i].data.nowis = dst + (dst[i].data.nowis - src);
 }
 
 } // namespace
@@ -143,6 +151,11 @@ Engine::Engine(const Params &p, const Format &f, int nframes, int64_t fnum, int6
     parms.k = &kernelsFor(p.asm_opt);
     // at most one segment per two pixels of a row
     max_segments = static_cast<size_t>(f.height) * ((f.width + 1) / 2);
+    // Map cache: a frame in flight needs 5 entries, consecutive frames share most of them. Keep room for
+    // all host threads, but at most about 512 MB of maps.
+    const size_t threads = std::max(1u, std::thread::hardware_concurrency());
+    cache_capacity = std::max<size_t>(12, 3 * (threads + 2));
+    cache_capacity = std::min(cache_capacity, std::max<size_t>(12, (size_t(512) << 20) / std::max<size_t>(parms.size, 1)));
 
     if (!p.outfile.empty()) {
         outfile = std::fopen(p.outfile.c_str(), "wb");
@@ -173,6 +186,48 @@ std::unique_ptr<Engine::Work> Engine::acquire() {
 void Engine::release(std::unique_ptr<Work> w) {
     std::lock_guard<std::mutex> lock(pool_mutex);
     pool.push_back(std::move(w));
+}
+
+std::shared_ptr<const Engine::MapEntry> Engine::cachedMap(MapKind kind, int frame,
+                                                          const std::function<void(MapEntry &)> &compute) {
+    const std::pair<int, int> key(static_cast<int>(kind), frame);
+    std::shared_ptr<MapEntry> e;
+    {
+        std::unique_lock<std::mutex> lock(cache_mutex);
+        auto it = cache.find(key);
+        if (it != cache.end()) {
+            e = it->second;
+            e->last_use = ++cache_tick;
+            cache_cv.wait(lock, [&] { return e->ready; });
+            if (!e->failed) return e;
+            cache.erase(key); // the computing thread failed: try again
+        }
+        e = std::make_shared<MapEntry>();
+        e->last_use = ++cache_tick;
+        cache[key] = e;
+        // evict the least recently used finished entries that nobody holds
+        while (cache.size() > cache_capacity) {
+            auto victim = cache.end();
+            for (auto i = cache.begin(); i != cache.end(); ++i)
+                if (i->second->ready && i->second.use_count() == 1 &&
+                    (victim == cache.end() || i->second->last_use < victim->second->last_use))
+                    victim = i;
+            if (victim == cache.end()) break;
+            cache.erase(victim);
+        }
+    }
+    try {
+        compute(*e);
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        e->failed = e->ready = true;
+        cache_cv.notify_all();
+        throw;
+    }
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    e->ready = true;
+    cache_cv.notify_all();
+    return e;
 }
 
 void Engine::writeSpots(int fn, const Segments &segs) {
@@ -231,7 +286,6 @@ void Engine::processT(int fn, const FrameR *const src[5], const PlaneR *ext, con
 
     uint8_t *c_noise = W.noise[1].data();
     uint8_t *c_motion = W.motion[0].data();
-    uint8_t *n_motion = W.motion[1].data();
     uint8_t *m_motion = W.motion[2].data();
     Segments &c_segs = W.segs[1];
 
@@ -241,11 +295,16 @@ void Engine::processT(int fn, const FrameR *const src[5], const PlaneR *ext, con
     const int row_bytes = P.width * static_cast<int>(B);
 
     if (params.median) { // simple median mode
-        motion_pc(p, c, c_motion);
-        motion_denoise(c_motion, P);
-        motion_pc(c, n, n_motion);
-        motion_denoise(n_motion, P);
-        motion_merge(c_motion, n_motion, m_motion, P);
+        // motion of frame k against k-1, shared by the output frames k-1 and k
+        auto median_motion = [&](const FrameR *a, const FrameR *b, int k) {
+            return cachedMap(kMedianMotion, k, [&](MapEntry &e) {
+                e.map.resize(P.size);
+                motion_pc(a, b, e.map.data());
+                motion_denoise(e.map.data(), P);
+            });
+        };
+        const auto cm = median_motion(p, c, fn), nm = median_motion(c, n, fn + 1);
+        motion_merge(cm->map.data(), nm->map.data(), m_motion, P);
         exec_median[P.show](Y(p), S(p), Y(c), S(c), nullptr, m_motion, Y(n), S(n), o, os, P);
         noise_out = nullptr;
     } else if (params.motpn) { // motion from previous to next frame
@@ -272,39 +331,55 @@ void Engine::processT(int fn, const FrameR *const src[5], const PlaneR *ext, con
             exec_pixel[P.show](Y(p), S(p), Y(c), S(c), c_noise, c_motion, Y(n), S(n), o, os, P);
         }
     } else { // motion from previous to current and from current to next frame
-        uint8_t *p_noise = W.noise[0].data();
-        uint8_t *n_noise = W.noise[2].data();
+        // Noise of frames n-1, n, n+1 and motion of n (against n-1) and n+1 (against n) are shared with
+        // the neighbouring output frames, so they come from the map cache.
         const FrameR *f3[3] = {p, c, n};
         const FrameR *before[3] = {pp, p, c};
         const FrameR *after[3] = {c, n, nn};
+        std::shared_ptr<const MapEntry> noise[3], motion[2];
         for (int i = 0; i < 3; ++i) {
-            segments_of(before[i], f3[i], after[i], W.noise[i].data(), W.segs[i]);
-            mark_noise(W.segs[i], W.noise[i].data(), P);
-            if (P.seg == 0) noise_dilate(W.noise[i].data(), P);
+            noise[i] = cachedMap(kNoise, fn - 1 + i, [&](MapEntry &e) {
+                Segments &tmp = W.segs[0];
+                uint8_t *map = W.noise[0].data();
+                segments_of(before[i], f3[i], after[i], map, tmp);
+                mark_noise(tmp, map, P);
+                if (P.seg == 0) noise_dilate(map, P);
+                e.map.assign(map, map + P.size);
+                const size_t count = static_cast<size_t>(tmp.end - tmp.data);
+                e.segs.resize(count + 2);
+                copy_segments(tmp.data, count, e.segs.data());
+            });
         }
-        motion_pc(p, c, c_motion);
-        noise_to_one(p_noise, c_noise, c_motion, P);
-        motion_denoise(c_motion, P);
-        motion_scene(c_motion, P);
-        motion_pc(c, n, n_motion);
-        noise_to_one(c_noise, n_noise, n_motion, P);
-        motion_denoise(n_motion, P);
-        motion_scene(n_motion, P);
-        motion_merge(c_motion, n_motion, m_motion, P);
+        for (int j = 0; j < 2; ++j) {
+            motion[j] = cachedMap(kMotion, fn + j, [&](MapEntry &e) {
+                e.map.resize(P.size);
+                motion_pc(f3[j], f3[j + 1], e.map.data());
+                noise_to_one(noise[j]->map.data(), noise[j + 1]->map.data(), e.map.data(), P);
+                motion_denoise(e.map.data(), P);
+                motion_scene(e.map.data(), P);
+            });
+        }
+        const uint8_t *cm = motion[0]->map.data();
+        motion_merge(cm, motion[1]->map.data(), m_motion, P);
         add_ext(m_motion);
         if (P.seg != 0) {
+            // segments and noise map of frame n are changed below: work on copies
+            const size_t count = noise[1]->segs.size() - 2;
+            copy_segments(noise[1]->segs.data(), count, c_segs.data);
+            c_segs.end = c_segs.data + count;
             reject_on_motion(c_segs, m_motion, P);
             copy_plane(c->plane[0], dst.plane[0], row_bytes, P.height);
             remove_segments(c_segs, Y(p), S(p), Y(n), S(n), o, os, c_noise, P);
             if (P.show == S_DENOISE) {
-                if (P.tsmooth > 0) temporal_smooth(c_segs, Y(p), S(p), Y(n), S(n), o, os, c_noise, c_motion, P);
+                if (P.tsmooth > 0) temporal_smooth(c_segs, Y(p), S(p), Y(n), S(n), o, os, c_noise, cm, P);
             } else if (P.show == S_MARK) {
                 mark_outliers(Y(p), S(p), Y(c), S(c), c_noise, m_motion, Y(n), S(n), o, os, P);
             } else {
                 map_outliers(Y(p), S(p), Y(c), S(c), c_noise, m_motion, Y(n), S(n), o, os, P);
             }
         } else {
-            exec_pixel[P.show](Y(p), S(p), Y(c), S(c), c_noise, m_motion, Y(n), S(n), o, os, P);
+            noise_out = noise[1]->map.data();
+            exec_pixel[P.show](Y(p), S(p), Y(c), S(c), noise_out, m_motion, Y(n), S(n), o, os, P);
         }
     }
 

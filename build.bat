@@ -23,3 +23,6 @@ if /i "%1"=="compat" exit /b 0
 rem Kernel self test: every instruction set against the C kernels
 cl %FLAGS% test\kernel_test.cpp src\core\kernels_c.cpp src\core\kernels_sse2.cpp src\core\kernels_neon.cpp ^
   src\core\kernels_dispatch.cpp %OUT%\kernels_avx2.obj /Fo%OUT%\ /Fe%OUT%\kernel_test.exe /link /NOLOGO || exit /b 1
+rem Speed test of the engine and its stages: build\bench.exe [asm_opt] [frames]
+cl %FLAGS% test\bench.cpp src\core\engine.cpp src\core\filters.cpp src\core\kernels_c.cpp src\core\kernels_sse2.cpp ^
+  src\core\kernels_neon.cpp src\core\kernels_dispatch.cpp %OUT%\kernels_avx2.obj /Fo%OUT%\ /Fe%OUT%\bench.exe /link /NOLOGO || exit /b 1

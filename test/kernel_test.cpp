@@ -223,6 +223,22 @@ void testTable(const Kernels &k, const char *isa) {
         c.window(r1.data() + pad, w, rad, gate ? noise.data() : nullptr, wthr, val, o1.data(), tmp.data());
         k.window(r1.data() + pad, w, rad, gate ? noise.data() : nullptr, wthr, val, o2.data(), tmp.data());
         check(o1 == o2, isa, "window", w, "rad=" + std::to_string(rad));
+
+        // OR of lines and of a column window (dilate of binary maps)
+        const int nl = rnd(1, 17), orad = rnd(0, 8);
+        std::vector<std::vector<uint8_t>> lines;
+        std::vector<const uint8_t *> lp;
+        for (int i = 0; i < nl; ++i) lines.push_back(bytes(w, rnd(1, 2)));
+        for (auto &l : lines) lp.push_back(l.data());
+        c.or_rows(lp.data(), nl, o1.data(), w);
+        k.or_rows(lp.data(), nl, o2.data(), w);
+        check(o1 == o2, isa, "or_rows", w);
+        std::vector<uint8_t> padded(w + 2 * orad + 64, 0);
+        for (int x = 0; x < w; ++x) padded[orad + x] = noise[x];
+        const uint8_t oval = rnd(0, 1) ? 255 : 1;
+        c.or_window(padded.data() + orad, o1.data(), w, orad, oval);
+        k.or_window(padded.data() + orad, o2.data(), w, orad, oval);
+        check(o1 == o2, isa, "or_window", w, "rad=" + std::to_string(orad));
     }
     test16(k, isa);
 }

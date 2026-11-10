@@ -52,6 +52,10 @@ struct Kernels {
     void (*ext_mask)(const uint8_t *ext, uint8_t *m, int w);
     // first index >= x with l[i] > thr, or w
     int (*next_above)(const uint8_t *l, int x, int w, uint8_t thr);
+    // out[x] = rows[0][x] | rows[1][x] | ... (n rows)
+    void (*or_rows)(const uint8_t *const *rows, int n, uint8_t *out, int w);
+    // out[x] = (s[x-rad] | ... | s[x+rad]) ? val : 0; s readable from -rad to w+rad-1
+    void (*or_window)(const uint8_t *s, uint8_t *out, int w, int rad, uint8_t val);
 
     // 9..16 bit samples (shift = bits - 8). The noise and motion maps stay 8 bit.
     // outliers: o[x] = min(difference >> shift, 255), then as the 8 bit kernel (p1 in 8 bit units)

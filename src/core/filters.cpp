@@ -226,6 +226,18 @@ inline void k_map(const Parms &P, const uint8_t *noise, const uint8_t *motion, u
     P.k->map16(noise, motion, o, P.width, P.shift);
 }
 
+// Per-thread temporary buffers of the box filters, kept between calls.
+struct Scratch {
+    std::vector<int32_t> rows, tmp;
+    std::vector<uint8_t> map;
+    std::vector<uint8_t> orrow;
+};
+
+Scratch &scratch() {
+    thread_local Scratch s;
+    return s;
+}
+
 bool any_motion(const uint8_t *row, const Segment *c, const Parms &p) {
     const uint8_t *b = row + std::max(c->lx1 - 1, 0);
     const uint8_t *end = row + std::min(c->lx2 + 2, p.width);
@@ -240,10 +252,30 @@ void box_filter(const uint8_t *src, uint8_t *dst, int rad_x, int rad_y, const ui
                 uint8_t val, const Parms &p) {
     const int w = p.width, h = p.height, Y = p.y_next;
     const ptrdiff_t pitch = p.pitch;
+#if !DESPOT_COMPAT_363
+    if (!gate_map && thr == 0 && rad_x <= 8 && rad_y <= 8) {
+        // Dilate of a map without negative values: "sum of the box > 0" is "any pixel of the box set",
+        // which is cheaper as an OR of the 2 * rad_y + 1 lines (of the same field) and of 2 * rad_x + 1 columns.
+        std::vector<uint8_t> &orrow = scratch().orrow;
+        orrow.assign(static_cast<size_t>(w) + 2 * rad_x, 0); // zero padding left and right
+        const uint8_t *lines[17];
+        for (int y = 0; y < h; ++y) {
+            int n = 0;
+            for (int k = -rad_y; k <= rad_y; ++k) {
+                const int yy = y + k * Y;
+                if (yy >= 0 && yy < h) lines[n++] = src + yy * pitch;
+            }
+            p.k->or_rows(lines, n, orrow.data() + rad_x, w);
+            p.k->or_window(orrow.data() + rad_x, dst + y * pitch, w, rad_x, val);
+        }
+        return;
+    }
+#endif
     const int pad = rad_x + 1;
     const size_t rowlen = static_cast<size_t>(w) + 2 * pad + 1;
-    std::vector<int32_t> rows(rowlen * Y, 0);
-    std::vector<int32_t> tmp(static_cast<size_t>(w) + 2 * rad_x + 2);
+    std::vector<int32_t> &rows = scratch().rows, &tmp = scratch().tmp;
+    rows.assign(rowlen * Y, 0);
+    tmp.resize(static_cast<size_t>(w) + 2 * rad_x + 2);
     for (int y = -rad_y * Y; y < h; ++y) {
 #if DESPOT_COMPAT_363
         int32_t *r = rows.data() + (y & (Y - 1)) + pad;
@@ -269,11 +301,13 @@ void lineblur(const uint8_t *c_noise, const uint8_t *c_motion, T *o, int width, 
     int b[10];
     const int xleft = 2 * parms.blur;
     const int xright = width - 2 * parms.blur;
+    // only pixels with noise do anything: jump from one to the next
+    auto next = [&](int x, int end) { return parms.k->next_above(c_noise, x, end, 0); };
 
     switch (parms.blur) {
     case 0: break;
     case 1:
-        for (int x = xleft; x < xright; ++x) {
+        for (int x = next(xleft, xright); x < xright; x = next(x + 1, xright)) {
             if (c_noise[x] && !c_motion[x]) {
                 if (!c_noise[x - 1]) { // spot begins at x
                     b[0] = (o[x - 2] + 2 * o[x - 1] + o[x]) / 4;
@@ -290,7 +324,7 @@ void lineblur(const uint8_t *c_noise, const uint8_t *c_motion, T *o, int width, 
         }
         break;
     case 2:
-        for (int x = xleft; x < xright; ++x) {
+        for (int x = next(xleft, xright); x < xright; x = next(x + 1, xright)) {
             if (c_noise[x] && !c_motion[x]) {
                 if (!c_noise[x - 1]) {
                     b[3] = (o[x - 4] + 2 * o[x - 3] + 3 * o[x - 2] + 2 * o[x - 1] + o[x]) / 9;
@@ -315,7 +349,7 @@ void lineblur(const uint8_t *c_noise, const uint8_t *c_motion, T *o, int width, 
         }
         break;
     case 3:
-        for (int x = xleft; x < xright; ++x) {
+        for (int x = next(xleft, xright); x < xright; x = next(x + 1, xright)) {
             if (c_noise[x] && !c_motion[x]) {
                 if (!c_noise[x - 1]) {
                     b[2] = (o[x - 6] + 2 * o[x - 5] + 3 * o[x - 4] + 4 * o[x - 3] + 3 * o[x - 2] + 2 * o[x - 1] + o[x]) / 16;
@@ -349,7 +383,7 @@ void lineblur(const uint8_t *c_noise, const uint8_t *c_motion, T *o, int width, 
         break;
     case 4:
     default:
-        for (int x = 8; x < width - 8; ++x) {
+        for (int x = next(8, width - 8); x < width - 8; x = next(x + 1, width - 8)) {
             if (c_noise[x] && !c_motion[x]) {
                 if (!c_noise[x - 1]) {
                     b[1] = (o[x - 8] + 2 * o[x - 7] + 3 * o[x - 6] + 4 * o[x - 5] + 5 * o[x - 4] + 4 * o[x - 3] + 3 * o[x - 2] + 2 * o[x - 1] + o[x]) / 25;
@@ -528,8 +562,7 @@ template <typename T>
 void find_outliers(const T *p, ptrdiff_t ppitch, const T *c, ptrdiff_t cpitch, const T *n, ptrdiff_t npitch,
                    uint8_t *o, const Parms &parms) {
     // o is the difference of c to the range of prev and next (ranked: of 3 neighbours each)
-    std::memset(o, 0, parms.size);
-    for (int y = 0; y < parms.height; ++y) {
+    for (int y = 0; y < parms.height; ++y) { // the kernels write every column of the frame width
         k_outliers(parms, p, n, c, o);
         p += ppitch;
         c += cpitch;
@@ -597,7 +630,8 @@ void motion_denoise(uint8_t *moving, const Parms &p) {
     const int MPx3 = static_cast<int>((int64_t(p.merode) * 3 * (p.mwidth + 1) * (p.mheight + 1)) / 100);
     if (MHEIGHT_2 == 0 && MWIDTH_2 == 0) return;
 
-    std::vector<uint8_t> fmoving(p.size);
+    std::vector<uint8_t> &fmoving = scratch().map; // fully written before it is read
+    fmoving.resize(p.size);
     if (MPx3 > 0)
         box_filter(moving, fmoving.data(), MWIDTH_2, MHEIGHT_2, moving, MPx3, 1, p); // erode
     else
@@ -608,7 +642,8 @@ void motion_denoise(uint8_t *moving, const Parms &p) {
 void noise_dilate(uint8_t *noise, const Parms &p) {
     // dilate the noise map with range Parms.dilate (dilate stage of motion_denoise)
     if (p.dilate <= 0) return;
-    std::vector<uint8_t> fmoving(p.size);
+    std::vector<uint8_t> &fmoving = scratch().map; // fully written before it is read
+    fmoving.resize(p.size);
     binarize_map(noise, fmoving.data(), 1, p);
     box_filter(fmoving.data(), noise, p.dilate, p.dilate, nullptr, 0, 255, p);
 }

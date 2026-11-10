@@ -313,9 +313,10 @@ New in the port:
 - Multithreading (AviSynth+ `MT_NICE_FILTER`, VapourSynth `fmParallel`; with `outfile` the filter runs
   serialized). 3.6.3 cached maps of neighbour frames and was only correct for linear access. The port
   computes everything a frame needs from frames n-2..n+2, so random access, seeking and any number of
-  threads give the same output as linear access.
-- SSE2/AVX2/NEON code (`asm_opt`): 2 to 2.8 times faster than 3.6.3 on one thread (1080p, depending on
-  the mode), plus the gain from multithreading.
+  threads give the same output as linear access. Maps that neighbouring output frames share (`motpn=false`
+  and median mode) are computed once and kept in a thread-safe cache.
+- SSE2/AVX2/NEON code (`asm_opt`): with AVX2 2.8 to 4.4 times faster than 3.6.3 on one thread (1080p,
+  including decoding, depending on the mode), plus the gain from multithreading.
 - Formats other than YV12 and 9 to 16 bit samples (see [Formats](#formats)); frame properties are kept.
 
 ## History
@@ -340,7 +341,8 @@ meson setup build --vsenv -Db_vscrt=mt && ninja -C build   # Windows, MSVC
 pip install .                                              # wheel for site-packages/vapoursynth/plugins
 ```
 
-`build.bat` builds `build\DeSpot.dll` and `build\kernel_test.exe` with MSVC directly; there is also a
+`build.bat` builds `build\DeSpot.dll`, `build\kernel_test.exe` and `build\bench.exe` (speed of the engine
+and its stages on synthetic 1080p frames: `bench.exe [asm_opt]`) with MSVC directly; there is also a
 Visual Studio project in `msvc/`. The AviSynth+ and VapourSynth headers are included in `include/`.
 
 ## Tests
@@ -350,8 +352,9 @@ Visual Studio project in `msvc/`. The AviSynth+ and VapourSynth headers are incl
   set against C, all formats and bit depths, odd frame sizes, random frame order, parallel rendering, and
   that 8 bit content in 16 bit gives the same spots as in 8 bit. Without a path
   the installed plugin is tested.
-- `python test/avs_compare.py ref.dll new.dll clip.y4m`: compares two AviSynth+ builds over the
-  parameter cases; `test/gen_clip.py` writes a synthetic clip with spots. `build.bat compat` builds the
+- `python test/avs_compare.py ref.dll new.dll clip [workdir]`: compares two AviSynth+ builds over the
+  parameter cases, on a `.y4m` file or any video file ffms2 opens (`DESPOT_PRE="Trim(1000, -200)"` selects a
+  section, `DESPOT_CASES` a subset of the cases); `test/gen_clip.py` writes a synthetic clip with spots. `build.bat compat` builds the
   port with the 3.6.3 defects restored (`DESPOT_COMPAT_363`); that build must be identical to 3.6.3.
 
 ## Credits and license

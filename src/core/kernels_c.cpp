@@ -154,6 +154,22 @@ int nextAboveC(const uint8_t *l, int x, int w, uint8_t thr) {
     return x;
 }
 
+void orRowsC(const uint8_t *const *rows, int n, uint8_t *out, int w) {
+    for (int x = 0; x < w; ++x) {
+        uint8_t v = 0;
+        for (int i = 0; i < n; ++i) v |= rows[i][x];
+        out[x] = v;
+    }
+}
+
+void orWindowC(const uint8_t *s, uint8_t *out, int w, int rad, uint8_t val) {
+    for (int x = 0; x < w; ++x) {
+        uint8_t v = 0;
+        for (int i = -rad; i <= rad; ++i) v |= s[x + i];
+        out[x] = v ? val : 0;
+    }
+}
+
 void outliers16C(const uint16_t *p, const uint16_t *n, const uint16_t *c, uint8_t *o, int w, int sign, bool ranked,
                  uint8_t p1, int shift) {
     std::memset(o, 0, w);
@@ -204,7 +220,7 @@ void extMask16C(const uint16_t *ext, uint8_t *m, int w, int shift) { ref16::ext_
 const Kernels &kernelsC() {
     static const Kernels k = {outliersC,  motionC,  colsumC,       windowC,   binarizeC,   lumaSumsC,
                               removeC,    markC,    mapC,          mergeC,    noiseToOneC, tsmoothC,
-                              medianC,    countNonzeroC, extMaskC, nextAboveC,
+                              medianC,    countNonzeroC, extMaskC, nextAboveC, orRowsC, orWindowC,
                               outliers16C, motion16C, lumaSums16C, remove16C, mark16C,     map16C,
                               tsmooth16C, median16C, extMask16C};
     return k;

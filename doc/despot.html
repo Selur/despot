@@ -305,7 +305,8 @@ Speed increasing up to about 30%.</p>
 <p>Version 3.7.0 has C, SSE2, AVX2 and NEON code paths (see <var>asm_opt</var>), selected at runtime, and
 is multithreaded (AviSynth+ MT_NICE_FILTER, VapourSynth fmParallel; serialized when <var>outfile</var> is used).
 Every frame is computed from the frames n-2..n+2 only, so seeking and any number of threads give the same
-result as linear access. On one thread it is 2 to 2.8 times faster than 3.6.3.</p>
+result as linear access. Maps shared by neighbouring frames (motpn=false, median mode) are computed once.
+With AVX2 it is 2.8 to 4.4 times faster than 3.6.3 on one thread (1080p, including decoding).</p>
 <h3>COMPILING</h3>
 <p>Version 3.7.0 is built with Meson (<code>meson setup build &amp;&amp; ninja -C build</code>; on Windows with MSVC
 <code>meson setup build --vsenv -Db_vscrt=mt</code>), with <code>build.bat</code> or with the Visual Studio project in

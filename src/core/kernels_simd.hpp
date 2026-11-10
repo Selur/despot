@@ -301,6 +301,39 @@ int nextAboveT(const uint8_t *l, int x, int w, uint8_t thr) {
     return x;
 }
 
+template <class V>
+void orRowsT(const uint8_t *const *rows, int n, uint8_t *out, int w) {
+    using T = typename V::T;
+    int x = 0;
+    for (; x + V::N <= w; x += V::N) {
+        T v = V::zero();
+        for (int i = 0; i < n; ++i) v = V::or_(v, V::load(rows[i] + x));
+        V::store(out + x, v);
+    }
+    for (; x < w; ++x) {
+        uint8_t v = 0;
+        for (int i = 0; i < n; ++i) v |= rows[i][x];
+        out[x] = v;
+    }
+}
+
+template <class V>
+void orWindowT(const uint8_t *s, uint8_t *out, int w, int rad, uint8_t val) {
+    using T = typename V::T;
+    const T vv = V::set1(val);
+    int x = 0;
+    for (; x + V::N <= w; x += V::N) {
+        T v = V::zero();
+        for (int i = -rad; i <= rad; ++i) v = V::or_(v, V::load(s + x + i));
+        V::store(out + x, V::and_(nzV<V>(v), vv));
+    }
+    for (; x < w; ++x) {
+        uint8_t v = 0;
+        for (int i = -rad; i <= rad; ++i) v |= s[x + i];
+        out[x] = v ? val : 0;
+    }
+}
+
 // ---- 9..16 bit samples: V::U holds V::N / 2 unsigned 16 bit lanes ----
 
 template <class V>
@@ -485,7 +518,7 @@ const Kernels &makeKernels() {
     static const Kernels k = {outliersT<V>, motionT<V>,    V::colsum,     V::window,     binarizeT<V>,
                               lumaSumsT<V>, removeT<V>,    markT<V>,      mapT<V>,       mergeT<V>,
                               noiseToOneT<V>, tsmoothT<V>, medianT<V>,    countNonzeroT<V>, extMaskT<V>,
-                              nextAboveT<V>,  outliers16T<V>, motion16T<V>, lumaSums16S, remove16T<V>,
+                              nextAboveT<V>,  orRowsT<V>,  orWindowT<V>,  outliers16T<V>, motion16T<V>, lumaSums16S, remove16T<V>,
                               mark16T<V>,     map16T<V>,   tsmooth16S,    median16T<V>, extMask16T<V>};
     return k;
 }

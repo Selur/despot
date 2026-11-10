@@ -15,7 +15,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <cstdio>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -251,6 +254,19 @@ private:
     void processT(int n, const FrameR *const src[5], const PlaneR *ext, const FrameW &dst, Work &w);
     void writeSpots(int n, const Segments &segs);
 
+    // Per-frame maps shared between output frames (motpn=false and median mode): computed once by the
+    // first thread that needs them, other threads wait for that result. Entries are never modified.
+    struct MapEntry {
+        std::vector<uint8_t> map;    // noise map or motion map
+        std::vector<Segment> segs;   // noise entries: the segments plus two sentinels
+        bool ready = false;
+        bool failed = false;
+        uint64_t last_use = 0;
+    };
+    enum MapKind { kNoise = 0, kMotion = 1, kMedianMotion = 2 };
+    std::shared_ptr<const MapEntry> cachedMap(MapKind kind, int frame, const std::function<void(MapEntry &)> &compute);
+
+
     Params params;
     Format format;
     Parms parms;
@@ -260,6 +276,12 @@ private:
 
     std::mutex pool_mutex;
     std::vector<std::unique_ptr<Work>> pool;
+
+    std::mutex cache_mutex;
+    std::condition_variable cache_cv;
+    std::map<std::pair<int, int>, std::shared_ptr<MapEntry>> cache;
+    size_t cache_capacity = 16;
+    uint64_t cache_tick = 0;
 
     FILE *outfile = nullptr;
     std::mutex outfile_mutex;

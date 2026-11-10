@@ -68,3 +68,11 @@ kernel_test = executable('kernel_test', ['test/kernel_test.cpp'] + kernel_source
   build_by_default : false
 )
 test('kernels', kernel_test)
+
+# Speed of the engine and its stages on synthetic 1080p frames: meson compile -C build bench
+executable('bench', ['test/bench.cpp', 'src/core/engine.cpp', 'src/core/filters.cpp'] + kernel_sources,
+  include_directories : incs,
+  link_with : kernel_libs,
+  dependencies : dependency('threads'),
+  build_by_default : false
+)
