@@ -322,7 +322,7 @@ New in the port:
 
 | Version | Date | Changes |
 |---|---|---|
-| 3.7.0 | unreleased | This port: AviSynth+ and VapourSynth, multithreading, SIMD, more formats, 9..16 bit, bug fixes. |
+| 3.7.0 | 2026-11-10 | This port: AviSynth+ and VapourSynth, multithreading, SIMD, more formats, 9..16 bit, bug fixes. |
 | 3.6.3.1 | 2020-08-07 | Groucho2004: fixed a crash with AviSynth+ 3.6.1. |
 | 3.6.3.0 | 2020-06-03 | Groucho2004: AviSynth 2.6 API, x64 build. |
 | 3.6.3 | 2013-10-08 | cretindesalpes (Firesledge): `mc`, `spotmax1`, `spotmax2`. |
